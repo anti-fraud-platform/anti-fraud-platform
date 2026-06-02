@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom'
 
-// Вторая страница — нужна, чтобы продемонстрировать работающий роутинг.
+// Second page - used to demonstrate that routing works.
 function About() {
   return (
     <div style={{ padding: '2rem', fontFamily: 'sans-serif' }}>
@@ -9,9 +9,9 @@ function About() {
         <Link to="/about">About</Link>
       </nav>
 
-      <h1>О проекте</h1>
-      <p>Real-Time AdTech Anti-Fraud Engine — система защиты рекламных бюджетов от ботов.</p>
-      <p>Это фронтенд-часть. Базовый роутинг работает: ты на странице /about.</p>
+      <h1>About</h1>
+      <p>Real-Time AdTech Anti-Fraud Engine - a system that protects ad budgets from bots.</p>
+      <p>This is the frontend part. Basic routing works: you are on the /about page.</p>
     </div>
   )
 }
