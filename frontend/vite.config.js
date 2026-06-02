@@ -1,10 +1,10 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
-// Конфиг Vite.
-// Прокси: все запросы фронта на /api/* будут перенаправлены на бэкенд аналитики.
-// Это нужно, чтобы обойти CORS в режиме разработки.
-// Если у бэкенда аналитики (@vIadimirsoIovev) другой порт — поменяй 8081 ниже.
+// Vite config.
+// Proxy: all frontend requests to /api/* are forwarded to the analytics backend.
+// This is needed to bypass CORS in development mode.
+// If the analytics backend (@vIadimirsoIovev) uses a different port, change 8081 below.
 export default defineConfig({
   plugins: [react()],
   server: {
@@ -12,7 +12,7 @@ export default defineConfig({
       '/api': {
         target: 'http://localhost:8081',
         changeOrigin: true,
-        // фронт зовёт /api/v1/analytics/stats -> бэк получает /v1/analytics/stats
+        // frontend calls /api/v1/analytics/stats -> backend receives /v1/analytics/stats
         rewrite: (path) => path.replace(/^\/api/, ''),
       },
     },
