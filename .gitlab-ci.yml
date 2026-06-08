@@ -1,0 +1,46 @@
+stages:
+  - test
+  - build
+
+backend:
+  stage: test
+  image: golang:1.26-alpine
+  before_script:
+    - apk add --no-cache git
+  script:
+    - go mod tidy
+    - git diff --exit-code -- go.mod go.sum
+    - go test ./...
+    - go vet ./...
+
+frontend:
+  stage: test
+  image: node:22-bookworm-slim
+  cache:
+    key:
+      files:
+        - frontend/package-lock.json
+    paths:
+      - frontend/.npm/
+  before_script:
+    - cd frontend
+    - npm ci --no-audit --no-fund --cache .npm --prefer-offline
+  script:
+    - npm run lint
+    - npm run build
+
+docker-build:
+  stage: build
+  image: docker:28
+  services:
+    - docker:28-dind
+  variables:
+    DOCKER_TLS_CERTDIR: "/certs"
+  script:
+    # просто проверяем что образы собираются, push пока не делаем
+    - docker build -f Dockerfile.engine -t antifraud-engine:ci .
+    - docker build -f Dockerfile.analytics -t antifraud-analytics:ci .
+    - docker build -f frontend/Dockerfile -t antifraud-frontend:ci .
+  needs:
+    - backend
+    - frontend
