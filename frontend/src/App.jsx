@@ -1,13 +1,15 @@
 import { Routes, Route } from 'react-router-dom'
 import Dashboard from './pages/Dashboard'
-import About from './pages/About'
+import Logs from './pages/Logs'
+import Blacklist from './pages/Blacklist'
 
-// Application routing.
+// Application routing: three admin pages.
 function App() {
   return (
     <Routes>
       <Route path="/" element={<Dashboard />} />
-      <Route path="/about" element={<About />} />
+      <Route path="/logs" element={<Logs />} />
+      <Route path="/blacklist" element={<Blacklist />} />
     </Routes>
   )
 }
