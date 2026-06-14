@@ -1,16 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import Layout from '../components/Layout';
 import { recentClicks } from '../data/mockData';
 import SkeletonLogsRow from '../components/SkeletonLogsRow';
 
 function Logs() {
-  const [loading, setLoading] = useState(true);
-
-  // For testing purposes
-  useEffect(() => {
-    const timer = setTimeout(() => setLoading(false), 2000);
-    return () => clearTimeout(timer);
-  }, []);
+  const [loading/*, setLoading*/] = useState(false);
 
   return (
     <Layout title="Logs">

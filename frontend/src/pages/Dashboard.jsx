@@ -1,5 +1,6 @@
 import Layout from '../components/Layout';
 import { useStats } from '../hooks/useStats';
+import StatCard from '../components/StatCard';
 import SkeletonCard from '../components/SkeletonCard';
 import SkeletonChart from '../components/SkeletonChart';
 
@@ -14,17 +15,16 @@ function formatMoney(n) {
 function Dashboard() {
   const { data, loading, error } = useStats(2500);
 
-  const dashboardStats = data
+  const statItems = data
     ? [
-        { id: 'clicks', label: 'Total clicks', value: formatNumber(data.total_clicks), danger: false },
-        { id: 'bots', label: 'Blocked bots', value: formatNumber(data.blocked_bots), danger: true },
-        { id: 'saved', label: 'Money saved', value: formatMoney(data.saved_money_usd), danger: false },
+        { label: 'Total clicks', value: formatNumber(data.total_clicks), danger: false },
+        { label: 'Blocked bots', value: formatNumber(data.blocked_bots), danger: true },
+        { label: 'Money saved', value: formatMoney(data.saved_money_usd), danger: false },
       ]
     : [];
 
   return (
     <Layout title="Dashboard">
-      {}
       {loading && !data && (
         <>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-4">
@@ -54,13 +54,8 @@ function Dashboard() {
           )}
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-4">
-            {dashboardStats.map((s) => (
-              <div key={s.id} className="bg-surface rounded-lg p-4 text-center">
-                <p className="text-xs text-text-muted mb-1.5">{s.label}</p>
-                <p className={`text-2xl font-semibold ${s.danger ? 'text-danger' : 'text-text-main'}`}>
-                  {s.value}
-                </p>
-              </div>
+            {statItems.map((item, idx) => (
+              <StatCard key={idx} label={item.label} value={item.value} danger={item.danger} />
             ))}
           </div>
 

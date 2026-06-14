@@ -1,16 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import Layout from '../components/Layout';
 import { blacklist } from '../data/mockData';
 import SkeletonBlacklistRow from '../components/SkeletonBlacklistRow';
 
 function Blacklist() {
-  const [loading, setLoading] = useState(true);
-
-  // For testing purposes
-  useEffect(() => {
-    const timer = setTimeout(() => setLoading(false), 2000);
-    return () => clearTimeout(timer);
-  }, []);
+  const [loading/*, setLoading*/] = useState(false);
 
   return (
     <Layout title="Blacklist">
