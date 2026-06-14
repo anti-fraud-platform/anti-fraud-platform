@@ -20,7 +20,6 @@ var db *sql.DB
 func statsHandler(w http.ResponseWriter, r *http.Request) {
     var totalClicks, blockedBots int64
 
-    // Обработка ошибок — теперь безопасно
     err := db.QueryRow("SELECT COUNT(*) FROM click_logs").Scan(&totalClicks)
     if err != nil {
         log.Printf("Error counting total clicks: %v", err)

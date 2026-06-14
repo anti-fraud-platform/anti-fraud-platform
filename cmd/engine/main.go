@@ -3,57 +3,87 @@ package main
 import (
 	"encoding/json"
 	"log"
+	"net"
 	"net/http"
+	"sync"
 	"time"
 )
 
-type ClickRequest struct {
-	IP         string `json:"ip"`
-	UserAgent  string `json:"user_agent"`
-	CampaignID string `json:"campaign_id"`
+type MemoryRateLimiter struct {
+	mu       sync.Mutex
+	requests map[string]int
+	maxRate  int
 }
 
-type ClickResponse struct {
-	Allowed bool   `json:"allowed"`
-	Reason  string `json:"reason"`
+type ClickPayload struct {
+	CampaignID string `json:"campaign_id"`
+	UserAgent  string `json:"user_agent"`
+}
+
+var limiter = &MemoryRateLimiter{
+	requests: make(map[string]int),
+	maxRate:  5,
 }
 
 func main() {
-	mux := http.NewServeMux()
+	go func() {
+		ticker := time.NewTicker(time.Second)
+		for range ticker.C {
+			limiter.mu.Lock()
+			limiter.requests = make(map[string]int)
+			limiter.mu.Unlock()
+		}
+	}()
 
-	mux.HandleFunc("POST /v1/click", handleClick)
+	http.HandleFunc("/v1/click", rateLimitMiddleware(handleClick))
 
-	server := &http.Server{
-		Addr:         ":8080",
-		Handler:      mux,
-		ReadTimeout:  5 * time.Second,
-		WriteTimeout: 5 * time.Second,
+	log.Println("Core Engine API Gateway started on :8080")
+	if err := http.ListenAndServe(":8080", nil); err != nil {
+		log.Fatal(err)
 	}
+}
 
-	log.Println("The Core Engine is running on the port :8080...")
-	if err := server.ListenAndServe(); err != nil {
-		log.Fatalf("Server startup error: %v", err)
+func rateLimitMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ip, _, err := net.SplitHostPort(r.RemoteAddr)
+		if err != nil {
+			ip = r.RemoteAddr
+		}
+
+		limiter.mu.Lock()
+		limiter.requests[ip]++
+		currentRequests := limiter.requests[ip]
+		limiter.mu.Unlock()
+
+		if currentRequests > limiter.maxRate {
+			log.Printf("[RATE LIMIT] Blocked malicious requests from IP: %s (Rate: %d/s)", ip, currentRequests)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusTooManyRequests) // HTTP 429
+			json.NewEncoder(w).Encode(map[string]string{"error": "Too many requests. Real-time anti-fraud trigger."})
+			return
+		}
+
+		next.ServeHTTP(w, r)
 	}
 }
 
 func handleClick(w http.ResponseWriter, r *http.Request) {
-	var req ClickRequest
-
-	err := json.NewDecoder(r.Body).Decode(&req)
-	if err != nil {
-		http.Error(w, "invalid JSON", http.StatusBadRequest)
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	log.Printf("[Click Received] IP: %s | UA: %s | Campaign: %s\n", req.IP, req.UserAgent, req.CampaignID)
-
-	response := ClickResponse{
-		Allowed: true,
-		Reason:  "passed_initial_check",
+	var payload ClickPayload
+	err := json.NewDecoder(r.Body).Decode(&payload)
+	if err != nil {
+		http.Error(w, "Bad request", http.StatusBadRequest)
+		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-
-	json.NewEncoder(w).Encode(response)
+	json.NewEncoder(w).Encode(map[string]string{
+		"status":  "success",
+		"message": "Click registered, routing to verification queue",
+	})
 }

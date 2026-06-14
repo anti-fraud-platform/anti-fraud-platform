@@ -1,0 +1,21 @@
+# analytics пока отдает mock stats, но контейнер уже отдельный
+FROM golang:1.26-alpine AS build
+
+WORKDIR /app
+
+COPY go.* ./
+RUN go mod download
+
+COPY cmd ./cmd
+
+RUN CGO_ENABLED=0 GOOS=linux go build -o /bin/analytics ./cmd/analytics
+
+FROM alpine:3.21
+
+RUN adduser -D -H appuser
+COPY --from=build /bin/analytics /usr/local/bin/analytics
+USER appuser
+
+EXPOSE 8081
+
+ENTRYPOINT ["/usr/local/bin/analytics"]
