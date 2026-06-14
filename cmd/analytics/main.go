@@ -20,8 +20,20 @@ var db *sql.DB
 func statsHandler(w http.ResponseWriter, r *http.Request) {
     var totalClicks, blockedBots int64
 
-    db.QueryRow("SELECT COUNT(*) FROM click_logs").Scan(&totalClicks)
-    db.QueryRow("SELECT COUNT(*) FROM click_logs WHERE is_bot = true").Scan(&blockedBots)
+    // Обработка ошибок — теперь безопасно
+    err := db.QueryRow("SELECT COUNT(*) FROM click_logs").Scan(&totalClicks)
+    if err != nil {
+        log.Printf("Error counting total clicks: %v", err)
+        http.Error(w, "Internal server error", http.StatusInternalServerError)
+        return
+    }
+
+    err = db.QueryRow("SELECT COUNT(*) FROM click_logs WHERE is_bot = true").Scan(&blockedBots)
+    if err != nil {
+        log.Printf("Error counting blocked bots: %v", err)
+        http.Error(w, "Internal server error", http.StatusInternalServerError)
+        return
+    }
 
     saved := float64(blockedBots) * 5.0
 

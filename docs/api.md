@@ -3,25 +3,22 @@
 ## 1. Anti-Fraud Engine Core (Port 8080)
 
 ### `POST /v1/click`
-Receives click data and makes a decision: block or allow
+Принимает данные клика, принимает решение: блокировать или пропустить.
 
 **Request Body (JSON)**:
 ```json
 {
-  "user_id": "string",
-  "ip": "string",
-  "user_agent": "string",
-  "timestamp": "2023-10-27T10:00:00Z"
+  "campaign_id": "string",
+  "user_agent": "string"
 }
-```
 **Response (200 OK):**
-
 ```json
+
 {
-  "status": "allowed"
+  "allowed": true,
+  "reason": "passed_initial_check"
 }
 ```
-
 ## 2. Analytics Service (Port 8081)
 
 ### `GET /v1/analytics/stats`
@@ -33,3 +30,4 @@ Receives click data and makes a decision: block or allow
   "blocked_bots": 4980,
   "saved_money_usd": 24900.00
 }
+```
