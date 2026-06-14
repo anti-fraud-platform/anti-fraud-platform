@@ -3,7 +3,7 @@
 ## 1. Anti-Fraud Engine Core (Port 8080)
 
 ### `POST /v1/click`
-Принимает данные клика, принимает решение: блокировать или пропустить.
+Accepts click data and decides whether to block or allow.
 
 **Request Body (JSON)**:
 ```json
