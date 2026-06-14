@@ -1,9 +1,12 @@
 package main
 
 import (
+    "database/sql"
     "encoding/json"
     "log"
     "net/http"
+
+    _ "github.com/lib/pq"
 )
 
 type StatsResponse struct {
@@ -12,19 +15,38 @@ type StatsResponse struct {
     SavedMoneyUSD float64 `json:"saved_money_usd"`
 }
 
+var db *sql.DB
+
 func statsHandler(w http.ResponseWriter, r *http.Request) {
-    resp := StatsResponse{
-        TotalClicks:   12500,
-        BlockedBots:   4980,
-        SavedMoneyUSD: 24900.00,
-    }
+    var totalClicks, blockedBots int64
+
+    db.QueryRow("SELECT COUNT(*) FROM click_logs").Scan(&totalClicks)
+    db.QueryRow("SELECT COUNT(*) FROM click_logs WHERE is_bot = true").Scan(&blockedBots)
+
+    saved := float64(blockedBots) * 5.0
+
     w.Header().Set("Content-Type", "application/json")
     w.Header().Set("Access-Control-Allow-Origin", "*")
-    json.NewEncoder(w).Encode(resp)
+    json.NewEncoder(w).Encode(StatsResponse{
+        TotalClicks:   totalClicks,
+        BlockedBots:   blockedBots,
+        SavedMoneyUSD: saved,
+    })
 }
 
 func main() {
+    connStr := "user=antifraud password=antifraud123 dbname=analytics host=localhost port=5433 sslmode=disable"
+    var err error
+    db, err = sql.Open("postgres", connStr)
+    if err != nil {
+        log.Fatal(err)
+    }
+    if err = db.Ping(); err != nil {
+        log.Fatal("DB not reachable:", err)
+    }
+    log.Println("Connected to PG")
+
     http.HandleFunc("/v1/analytics/stats", statsHandler)
-    log.Println("Analytics server on :8081")
+    log.Println("Analytics on :8081")
     log.Fatal(http.ListenAndServe(":8081", nil))
 }
