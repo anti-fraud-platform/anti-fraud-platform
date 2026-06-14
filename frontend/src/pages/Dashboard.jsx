@@ -1,44 +1,78 @@
-import Layout from '../components/Layout'
-import { stats } from '../data/mockData'
+import { useState, useEffect } from 'react';
+import Layout from '../components/Layout';
+import { stats } from '../data/mockData';
+import SkeletonCard from '../components/SkeletonCard';
+import SkeletonChart from '../components/SkeletonChart';
 
-// Dashboard page: stat cards + empty chart slots (charts come next week).
 function Dashboard() {
+  const [loading, setLoading] = useState(true);
+
+  // For testing purposes
+  useEffect(() => {
+    const timer = setTimeout(() => setLoading(false), 2000);
+    return () => clearTimeout(timer);
+  }, []);
+
+  const dashboardStats = [
+    stats[0],                                   // Clicks total
+    stats[1],                                   // Bots blocked
+    { id: 'saved', label: 'Saved Money', value: '$45,600', danger: false },
+  ];
+
   return (
     <Layout title="Dashboard">
       {/* Stat cards */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginBottom: 16 }}>
-        {stats.map((s) => (
-          <div key={s.id} style={{ background: '#f4f5f7', borderRadius: 8, padding: 16 }}>
-            <p style={{ fontSize: 13, color: '#5f5e5a', margin: '0 0 6px' }}>{s.label}</p>
-            <p style={{ fontSize: 24, fontWeight: 600, margin: 0, color: s.danger ? '#a32d2d' : '#1a1a1a' }}>
-              {s.value}
-            </p>
-          </div>
-        ))}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-4">
+        {loading
+          ? Array.from({ length: 3 }).map((_, i) => <SkeletonCard key={i} />)
+          : dashboardStats.map((s) => (
+              <div key={s.id} className="bg-surface rounded-lg p-4 text-center">
+                <p className="text-xs text-text-muted mb-1.5">{s.label}</p>
+                <p
+                  className={`text-2xl font-semibold ${
+                    s.danger ? 'text-danger' : 'text-text-main'
+                  }`}
+                >
+                  {s.value}
+                </p>
+              </div>
+            ))}
       </div>
 
       {/* Chart placeholders */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-        {['Traffic over time', 'Bot ratio'].map((label) => (
-          <div
-            key={label}
-            style={{
-              border: '1px dashed #c9ccd2',
-              borderRadius: 12,
-              height: 220,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: '#9a9a96',
-              fontSize: 13,
-            }}
-          >
-            {label} — chart (Week 2)
-          </div>
-        ))}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {loading ? (
+          <>
+            <SkeletonChart />
+            <SkeletonChart />
+          </>
+        ) : (
+          <>
+            <div className="bg-chart-bg border border-chart-bar rounded-xl h-52 flex items-end justify-center gap-2 px-4 py-6">
+              <div className="w-[8%] bg-chart-bar rounded h-16" />
+              <div className="w-[8%] bg-chart-bar rounded h-24" />
+              <div className="w-[8%] bg-chart-bar rounded h-20" />
+              <div className="w-[8%] bg-chart-bar rounded h-10" />
+              <div className="w-[8%] bg-chart-bar rounded h-28" />
+              <div className="w-[8%] bg-chart-bar rounded h-14" />
+              <div className="w-[8%] bg-chart-bar rounded h-18" />
+              <div className="w-[8%] bg-chart-bar rounded h-22" />
+            </div>
+            <div className="bg-chart-bg border border-chart-bar rounded-xl h-52 flex items-end justify-center gap-2 px-4 py-6">
+              <div className="w-[8%] bg-chart-bar rounded h-16" />
+              <div className="w-[8%] bg-chart-bar rounded h-24" />
+              <div className="w-[8%] bg-chart-bar rounded h-20" />
+              <div className="w-[8%] bg-chart-bar rounded h-10" />
+              <div className="w-[8%] bg-chart-bar rounded h-28" />
+              <div className="w-[8%] bg-chart-bar rounded h-14" />
+              <div className="w-[8%] bg-chart-bar rounded h-18" />
+              <div className="w-[8%] bg-chart-bar rounded h-22" />
+            </div>
+          </>
+        )}
       </div>
     </Layout>
-  )
+  );
 }
 
-export default Dashboard
+export default Dashboard;

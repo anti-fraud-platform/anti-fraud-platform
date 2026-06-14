@@ -1,32 +1,43 @@
-import Layout from '../components/Layout'
-import { blacklist } from '../data/mockData'
+import { useState, useEffect } from 'react';
+import Layout from '../components/Layout';
+import { blacklist } from '../data/mockData';
+import SkeletonBlacklistRow from '../components/SkeletonBlacklistRow';
 
-// Blacklist page: table of blocked IPs (mock data for now).
 function Blacklist() {
+  const [loading, setLoading] = useState(true);
+
+  // For testing purposes
+  useEffect(() => {
+    const timer = setTimeout(() => setLoading(false), 2000);
+    return () => clearTimeout(timer);
+  }, []);
+
   return (
     <Layout title="Blacklist">
-      <div style={{ border: '1px solid #e2e4e8', borderRadius: 12, overflow: 'hidden' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+      <div className="border border-border rounded-xl overflow-hidden">
+        <table className="w-full border-collapse text-sm">
           <thead>
-            <tr style={{ background: '#f4f5f7', textAlign: 'left', color: '#5f5e5a' }}>
-              <th style={{ padding: '10px 14px', fontWeight: 500 }}>IP</th>
-              <th style={{ padding: '10px 14px', fontWeight: 500 }}>Reason</th>
-              <th style={{ padding: '10px 14px', fontWeight: 500 }}>Blocked at</th>
+            <tr className="bg-surface text-left text-text-muted">
+              <th className="px-3.5 py-2.5 font-medium">IP</th>
+              <th className="px-3.5 py-2.5 font-medium">Reason</th>
+              <th className="px-3.5 py-2.5 font-medium">Blocked at</th>
             </tr>
           </thead>
           <tbody>
-            {blacklist.map((row, i) => (
-              <tr key={i} style={{ borderTop: '1px solid #e2e4e8' }}>
-                <td style={{ padding: '10px 14px', fontFamily: 'monospace' }}>{row.ip}</td>
-                <td style={{ padding: '10px 14px', color: '#5f5e5a' }}>{row.reason}</td>
-                <td style={{ padding: '10px 14px', color: '#5f5e5a' }}>{row.blockedAt}</td>
-              </tr>
-            ))}
+            {loading
+              ? Array.from({ length: 3 }).map((_, i) => <SkeletonBlacklistRow key={i} />)
+              : blacklist.map((row, i) => (
+                  <tr key={i} className="border-t border-border">
+                    <td className="px-3.5 py-2.5 font-mono">{row.ip}</td>
+                    <td className="px-3.5 py-2.5 text-text-muted">{row.reason}</td>
+                    <td className="px-3.5 py-2.5 text-text-muted">{row.blockedAt}</td>
+                  </tr>
+                ))}
           </tbody>
         </table>
       </div>
     </Layout>
-  )
+  );
 }
 
-export default Blacklist
+export default Blacklist;

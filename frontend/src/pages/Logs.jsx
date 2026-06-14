@@ -1,44 +1,53 @@
-import Layout from '../components/Layout'
-import { recentClicks } from '../data/mockData'
+import { useState, useEffect } from 'react';
+import Layout from '../components/Layout';
+import { recentClicks } from '../data/mockData';
+import SkeletonLogsRow from '../components/SkeletonLogsRow';
 
-// Logs page: table of recent clicks (mock data for now).
 function Logs() {
+  const [loading, setLoading] = useState(true);
+
+  // For testing purposes
+  useEffect(() => {
+    const timer = setTimeout(() => setLoading(false), 2000);
+    return () => clearTimeout(timer);
+  }, []);
+
   return (
     <Layout title="Logs">
-      <div style={{ border: '1px solid #e2e4e8', borderRadius: 12, overflow: 'hidden' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+      <div className="border border-border rounded-xl overflow-hidden">
+        <table className="w-full border-collapse text-sm">
           <thead>
-            <tr style={{ background: '#f4f5f7', textAlign: 'left', color: '#5f5e5a' }}>
-              <th style={{ padding: '10px 14px', fontWeight: 500 }}>IP</th>
-              <th style={{ padding: '10px 14px', fontWeight: 500 }}>User-Agent</th>
-              <th style={{ padding: '10px 14px', fontWeight: 500 }}>Status</th>
+            <tr className="bg-surface text-left text-text-muted">
+              <th className="px-3.5 py-2.5 font-medium">IP</th>
+              <th className="px-3.5 py-2.5 font-medium">User-Agent</th>
+              <th className="px-3.5 py-2.5 font-medium text-center">Status</th>
             </tr>
           </thead>
           <tbody>
-            {recentClicks.map((row, i) => (
-              <tr key={i} style={{ borderTop: '1px solid #e2e4e8' }}>
-                <td style={{ padding: '10px 14px', fontFamily: 'monospace' }}>{row.ip}</td>
-                <td style={{ padding: '10px 14px', color: '#5f5e5a' }}>{row.agent}</td>
-                <td style={{ padding: '10px 14px' }}>
-                  <span
-                    style={{
-                      padding: '2px 10px',
-                      borderRadius: 8,
-                      fontSize: 12,
-                      background: row.status === 'bot' ? '#fcebeb' : '#e1f5ee',
-                      color: row.status === 'bot' ? '#a32d2d' : '#0f6e56',
-                    }}
-                  >
-                    {row.status}
-                  </span>
-                </td>
-              </tr>
-            ))}
+            {loading
+              ? Array.from({ length: 5 }).map((_, i) => <SkeletonLogsRow key={i} />)
+              : recentClicks.map((row, i) => (
+                  <tr key={i} className="border-t border-border">
+                    <td className="px-3.5 py-2.5 font-mono">{row.ip}</td>
+                    <td className="px-3.5 py-2.5 text-text-muted">{row.agent}</td>
+                    <td className="px-3.5 py-2.5 text-center">
+                      <span
+                        className={`inline-block px-2.5 py-0.5 rounded-lg text-xs ${
+                          row.status === 'bot'
+                            ? 'bg-danger-light text-danger'
+                            : 'bg-success-light text-success'
+                        }`}
+                      >
+                        {row.status}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
           </tbody>
         </table>
       </div>
     </Layout>
-  )
+  );
 }
 
-export default Logs
+export default Logs;
