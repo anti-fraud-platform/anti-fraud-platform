@@ -11,9 +11,9 @@
   "campaign_id": "string",
   "user_agent": "string"
 }
+```
 **Response (200 OK):**
 ```json
-
 {
   "allowed": true,
   "reason": "passed_initial_check"
