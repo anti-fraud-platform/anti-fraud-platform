@@ -7,8 +7,11 @@ import (
 	"fmt"
 	"math/rand"
 	"net/http"
+	"os"
+	"os/signal"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 )
 
@@ -20,7 +23,7 @@ type ClickEvent struct {
 	Timestamp  int64  `json:"timestamp"`
 }
 
-// random data pools 
+//  random data pools 
 
 var userAgents = []string{
 	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
@@ -60,25 +63,33 @@ func randomEvent(rng *rand.Rand, fixedIP string) ClickEvent {
 	}
 }
 
+//  counters 
+// Four separate atomic counters so the report is precise.
+// We track 429 separately from generic errors because the task
+// specifically wants to show "blocked by rate limiter" vs real failures.
+
+type counters struct {
+	sent    atomic.Int64 // every request attempted
+	ok      atomic.Int64 // HTTP 200–299
+	blocked atomic.Int64 // HTTP 429 (rate limited)
+	errs    atomic.Int64 // network errors or unexpected status codes
+}
+
 //  worker 
 
 func worker(
-	id int,
 	target string,
 	client *http.Client,
 	rng *rand.Rand,
 	fixedIP string,
 	rps int,
-	duration time.Duration,
-	sent *atomic.Int64,
-	ok *atomic.Int64,
-	errs *atomic.Int64,
+	deadline time.Time,
+	c *counters,
 	wg *sync.WaitGroup,
 ) {
 	defer wg.Done()
 
-	interval := time.Second / time.Duration(rps) // gap between requests
-	deadline := time.Now().Add(duration)
+	interval := time.Second / time.Duration(rps)
 
 	for time.Now().Before(deadline) {
 		start := time.Now()
@@ -87,91 +98,120 @@ func worker(
 		body, _ := json.Marshal(event)
 
 		resp, err := client.Post(target, "application/json", bytes.NewReader(body))
-		sent.Add(1)
+		c.sent.Add(1)
 
 		if err != nil {
-			errs.Add(1)
+			// network-level failure (server down, timeout, etc.)
+			c.errs.Add(1)
 		} else {
 			resp.Body.Close()
-			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-				ok.Add(1)
-			} else {
-				errs.Add(1)
+			switch {
+			case resp.StatusCode >= 200 && resp.StatusCode < 300:
+				c.ok.Add(1)
+			case resp.StatusCode == http.StatusTooManyRequests: // 429
+				c.blocked.Add(1)
+			default:
+				c.errs.Add(1)
 			}
 		}
 
-		// honour the requested rate — sleep only for the remainder of the interval
-		elapsed := time.Since(start)
-		if sleep := interval - elapsed; sleep > 0 {
+		if sleep := interval - time.Since(start); sleep > 0 {
 			time.Sleep(sleep)
 		}
 	}
 }
 
+//  report 
+
+func printReport(target string, c *counters, elapsed float64) {
+	total := c.sent.Load()
+	ok := c.ok.Load()
+	blocked := c.blocked.Load()
+	errs := c.errs.Load()
+
+	var efficiency float64
+	if total > 0 {
+		efficiency = float64(blocked) / float64(total) * 100
+	}
+
+	fmt.Println()
+	fmt.Println("==============================")
+	fmt.Println("   ANTI-FRAUD TEST REPORT")
+	fmt.Println("==============================")
+	fmt.Printf("  Target URL         : %s\n", target)
+	fmt.Printf("  Duration           : %.1fs\n", elapsed)
+	fmt.Println("------------------------------")
+	fmt.Printf("  Total Requests Sent: %d\n", total)
+	fmt.Printf("  Success  (200 OK)  : %d\n", ok)
+	fmt.Printf("  Blocked  (429)     : %d\n", blocked)
+	fmt.Printf("  Errors   (other)   : %d\n", errs)
+	fmt.Println("------------------------------")
+	fmt.Printf("  Block Rate         : %.1f%%\n", efficiency)
+	fmt.Println("==============================")
+}
+
+//  main 
+
 func main() {
-	//  flags 
-	target := flag.String("target", "http://localhost:8080/v1/click", "Engine endpoint")
-	workers := flag.Int("workers", 10, "Number of concurrent goroutines")
-	rps := flag.Int("rps", 10, "Requests per second per worker")
-	dur := flag.Duration("duration", 30*time.Second, "How long to run (e.g. 30s, 2m)")
-	attack := flag.Bool("attack", false, "Attack mode: single IP hammers at 100 rps per worker")
-	attackIP := flag.String("attack-ip", "1.2.3.4", "IP to use in attack mode")
+	target   := flag.String("target",    "http://localhost:8080/v1/click", "Engine endpoint")
+	workers  := flag.Int("workers",      10,                               "Number of concurrent goroutines")
+	rps      := flag.Int("rps",          10,                               "Requests per second per worker")
+	dur      := flag.Duration("duration", 30*time.Second,                  "How long to run (e.g. 30s, 2m)")
+	attack   := flag.Bool("attack",      false,                            "Attack mode: one IP at 100 rps per worker")
+	attackIP := flag.String("attack-ip", "1.2.3.4",                       "Fixed IP used in attack mode")
 	flag.Parse()
 
-	// attack mode overrides rps and fixes the source IP
 	fixedIP := ""
 	if *attack {
 		*rps = 100
 		fixedIP = *attackIP
-		fmt.Printf("⚠️  ATTACK MODE — IP=%s, %d workers × %d rps = %d rps total\n",
+		fmt.Printf("⚠️  ATTACK MODE — IP=%s | %d workers × %d rps = %d rps total\n",
 			fixedIP, *workers, *rps, *workers**rps)
 	} else {
 		fmt.Printf("🔀 NORMAL MODE — %d workers × %d rps = %d rps total\n",
 			*workers, *rps, *workers**rps)
 	}
-
 	fmt.Printf("   target:   %s\n", *target)
 	fmt.Printf("   duration: %s\n\n", *dur)
 
-	// shared HTTP client — keep-alives on, generous timeout
 	client := &http.Client{Timeout: 5 * time.Second}
 
-	var (
-		sent, okCount, errCount atomic.Int64
-		wg                      sync.WaitGroup
-	)
+	var c   counters
+	var wg  sync.WaitGroup
 
-	start := time.Now()
+	deadline := time.Now().Add(*dur)
+	start    := time.Now()
 
 	for i := 0; i < *workers; i++ {
 		wg.Add(1)
-		// each worker gets its own RNG so there's no lock contention
 		rng := rand.New(rand.NewSource(time.Now().UnixNano() + int64(i)))
-		go worker(i, *target, client, rng, fixedIP, *rps, *dur, &sent, &okCount, &errCount, &wg)
+		go worker(*target, client, rng, fixedIP, *rps, deadline, &c, &wg)
 	}
 
-	// live progress ticker
+	// live progress line — updates every second
 	ticker := time.NewTicker(time.Second)
 	go func() {
 		prev := int64(0)
 		for range ticker.C {
-			cur := sent.Load()
-			fmt.Printf("\r  sent: %-8d  ok: %-8d  errors: %-8d  current rps: %-6d",
-				cur, okCount.Load(), errCount.Load(), cur-prev)
+			cur := c.sent.Load()
+			fmt.Printf("\r  sent: %-8d  ok: %-8d  blocked(429): %-8d  rps: %-6d",
+				cur, c.ok.Load(), c.blocked.Load(), cur-prev)
 			prev = cur
 		}
+	}()
+
+	// handle Ctrl+C — print report before exiting
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sig
+		ticker.Stop()
+		printReport(*target, &c, time.Since(start).Seconds())
+		os.Exit(0)
 	}()
 
 	wg.Wait()
 	ticker.Stop()
 
-	elapsed := time.Since(start).Seconds()
-	total := sent.Load()
-
-	fmt.Printf("\n\n=== Done ===\n")
-	fmt.Printf("  Total sent : %d\n", total)
-	fmt.Printf("  OK (2xx)   : %d\n", okCount.Load())
-	fmt.Printf("  Errors     : %d\n", errCount.Load())
-	fmt.Printf("  Duration   : %.1fs\n", elapsed)
-	fmt.Printf("  Avg RPS    : %.0f\n", float64(total)/elapsed)
+	printReport(*target, &c, time.Since(start).Seconds())
 }
