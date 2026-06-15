@@ -1,33 +1,34 @@
-import { NavLink } from 'react-router-dom'
+import { NavLink } from 'react-router-dom';
 
-// Reusable admin shell: sidebar + top bar wrap any page passed as children.
 const navItems = [
   { to: '/', label: 'Dashboard' },
   { to: '/logs', label: 'Logs' },
   { to: '/blacklist', label: 'Blacklist' },
-]
+];
 
 function Layout({ title, children }) {
   return (
-    <div style={{ display: 'flex', minHeight: '100vh', fontFamily: 'sans-serif', color: '#1a1a1a' }}>
-      <aside style={{ width: 200, background: '#f4f5f7', padding: '1rem 0.75rem', flexShrink: 0 }}>
-        <div style={{ padding: '0 8px 16px', borderBottom: '1px solid #e2e4e8', marginBottom: 12 }}>
-          <span style={{ fontSize: 16, fontWeight: 600, color: '#185fa5' }}>AntiFraud</span>
+    <div className="flex min-h-screen font-sans text-text-main">
+      {/* Sidebar */}
+      <aside className="w-[200px] bg-surface flex-shrink-0 flex flex-col">
+        <div className="border-b border-border py-4">
+          <div className="text-center text-base font-semibold text-primary">
+            AntiFraud
+          </div>
         </div>
-        <nav style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <nav className="flex-1 px-3 py-4 flex flex-col gap-1">
           {navItems.map((item) => (
             <NavLink
               key={item.to}
               to={item.to}
               end={item.to === '/'}
-              style={({ isActive }) => ({
-                padding: '9px 10px',
-                borderRadius: 8,
-                fontSize: 14,
-                textDecoration: 'none',
-                color: isActive ? '#185fa5' : '#5f5e5a',
-                background: isActive ? '#e6f1fb' : 'transparent',
-              })}
+              className={({ isActive }) =>
+                `block py-2 rounded-lg text-sm text-center ${
+                  isActive
+                    ? 'text-primary bg-primary-light'
+                    : 'text-text-muted hover:bg-gray-100'
+                }`
+              }
             >
               {item.label}
             </NavLink>
@@ -35,21 +36,23 @@ function Layout({ title, children }) {
         </nav>
       </aside>
 
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: '#fff' }}>
-        <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 24px', borderBottom: '1px solid #e2e4e8' }}>
-          <span style={{ fontSize: 16, fontWeight: 600 }}>{title}</span>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-            <span style={{ background: '#e1f5ee', color: '#0f6e56', fontSize: 12, padding: '4px 10px', borderRadius: 8 }}>
+      {/* Main area */}
+      <div className="flex-1 flex flex-col bg-white">
+        <header className="flex items-center justify-between px-6 py-3 border-b border-border">
+          <h1 className="text-base font-semibold">{title}</h1>
+          <div className="flex items-center gap-4">
+            <span className="bg-success-light text-success text-xs px-2.5 py-1 rounded-lg">
               ● Live
             </span>
-            <div style={{ width: 30, height: 30, borderRadius: '50%', background: '#e6f1fb', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, color: '#185fa5' }}>TD</div>
+            <div className="w-8 h-8 rounded-full bg-primary-light flex items-center justify-center text-xs text-primary font-semibold">
+              TD
+            </div>
           </div>
         </header>
-
-        <main style={{ padding: 24, flex: 1 }}>{children}</main>
+        <main className="p-6 flex-1">{children}</main>
       </div>
     </div>
-  )
+  );
 }
 
-export default Layout
+export default Layout;
