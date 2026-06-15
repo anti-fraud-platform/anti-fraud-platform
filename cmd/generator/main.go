@@ -23,7 +23,7 @@ type ClickEvent struct {
 	Timestamp  int64  `json:"timestamp"`
 }
 
-//  random data pools 
+//  random data pools
 
 var userAgents = []string{
 	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
@@ -63,7 +63,7 @@ func randomEvent(rng *rand.Rand, fixedIP string) ClickEvent {
 	}
 }
 
-//  counters 
+//  counters
 // Four separate atomic counters so the report is precise.
 // We track 429 separately from generic errors because the task
 // specifically wants to show "blocked by rate limiter" vs real failures.
@@ -75,7 +75,7 @@ type counters struct {
 	errs    atomic.Int64 // network errors or unexpected status codes
 }
 
-//  worker 
+//  worker
 
 func worker(
 	target string,
@@ -97,11 +97,20 @@ func worker(
 		event := randomEvent(rng, fixedIP)
 		body, _ := json.Marshal(event)
 
-		resp, err := client.Post(target, "application/json", bytes.NewReader(body))
+		req, err := http.NewRequest("POST", target, bytes.NewReader(body))
+		if err != nil {
+			c.errs.Add(1)
+			continue
+		}
+
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Forwarded-For", event.IP)
+		req.Header.Set("X-Real-IP", event.IP)
+
+		resp, err := client.Do(req)
 		c.sent.Add(1)
 
 		if err != nil {
-			// network-level failure (server down, timeout, etc.)
 			c.errs.Add(1)
 		} else {
 			resp.Body.Close()
@@ -121,7 +130,7 @@ func worker(
 	}
 }
 
-//  report 
+//  report
 
 func printReport(target string, c *counters, elapsed float64) {
 	total := c.sent.Load()
@@ -150,15 +159,15 @@ func printReport(target string, c *counters, elapsed float64) {
 	fmt.Println("==============================")
 }
 
-//  main 
+//  main
 
 func main() {
-	target   := flag.String("target",    "http://localhost:8080/v1/click", "Engine endpoint")
-	workers  := flag.Int("workers",      10,                               "Number of concurrent goroutines")
-	rps      := flag.Int("rps",          10,                               "Requests per second per worker")
-	dur      := flag.Duration("duration", 30*time.Second,                  "How long to run (e.g. 30s, 2m)")
-	attack   := flag.Bool("attack",      false,                            "Attack mode: one IP at 100 rps per worker")
-	attackIP := flag.String("attack-ip", "1.2.3.4",                       "Fixed IP used in attack mode")
+	target := flag.String("target", "http://localhost:8080/v1/click", "Engine endpoint")
+	workers := flag.Int("workers", 10, "Number of concurrent goroutines")
+	rps := flag.Int("rps", 10, "Requests per second per worker")
+	dur := flag.Duration("duration", 30*time.Second, "How long to run (e.g. 30s, 2m)")
+	attack := flag.Bool("attack", false, "Attack mode: one IP at 100 rps per worker")
+	attackIP := flag.String("attack-ip", "1.2.3.4", "Fixed IP used in attack mode")
 	flag.Parse()
 
 	fixedIP := ""
@@ -176,11 +185,11 @@ func main() {
 
 	client := &http.Client{Timeout: 5 * time.Second}
 
-	var c   counters
-	var wg  sync.WaitGroup
+	var c counters
+	var wg sync.WaitGroup
 
 	deadline := time.Now().Add(*dur)
-	start    := time.Now()
+	start := time.Now()
 
 	for i := 0; i < *workers; i++ {
 		wg.Add(1)
