@@ -3,6 +3,8 @@ FROM golang:1.26-alpine AS build
 
 WORKDIR /app
 
+RUN apk add --no-cache ca-certificates && update-ca-certificates
+
 COPY go.* ./
 RUN go mod download
 
@@ -11,6 +13,7 @@ COPY cmd ./cmd
 RUN CGO_ENABLED=0 GOOS=linux go build -o /bin/engine ./cmd/engine
 
 FROM alpine:3.21
+
 
 RUN adduser -D -H appuser
 COPY --from=build /bin/engine /usr/local/bin/engine
