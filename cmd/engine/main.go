@@ -123,7 +123,7 @@ func handleClick(w http.ResponseWriter, r *http.Request) {
 			Reason:     "static_blacklist",
 		})
 
-		w.WriteHeader(http.StatusTooManyRequests)
+		w.WriteHeader(http.StatusForbidden)
 		json.NewEncoder(w).Encode(map[string]string{"error": "Blocked by static blacklist."})
 		return
 	}
