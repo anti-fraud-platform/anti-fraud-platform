@@ -51,7 +51,7 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: "6379"
     ports:
-      - "8081:8081"
+      - "8082:8081"
     depends_on:
       postgres:
         condition: service_healthy
@@ -71,7 +71,7 @@ services:
       ANALYTICS_BASE_URL: http://analytics:8081
       ENGINE_BASE_URL: http://engine:8080
     ports:
-      - "3000:80"
+      - "3001:80"
     depends_on:
       - analytics
       - engine
@@ -103,7 +103,7 @@ services:
       - wal_compression=on
     shm_size: "256mb"
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - pg_data:/var/lib/postgresql/data
       - ./deployments/init-db.sql:/docker-entrypoint-initdb.d/init.sql:ro
@@ -122,7 +122,7 @@ services:
     environment:
       REDIS_PORT: "6379"
     ports:
-      - "6379:6379"
+      - "6380:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
