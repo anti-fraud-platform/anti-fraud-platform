@@ -9,14 +9,15 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
-	_ "github.com/lib/pq"
-	"github.com/redis/go-redis/v9"
-
 	"anti-fraud/internal/bloom"
 	"anti-fraud/internal/logger"
+
+	_ "github.com/lib/pq"
+	"github.com/redis/go-redis/v9"
 )
 
 type ClickPayload struct {
@@ -26,17 +27,16 @@ type ClickPayload struct {
 
 var (
 	rdb         *redis.Client
+	db          *sql.DB
+	ipFilter    *bloom.IPFilter
+	batchLogger *logger.BatchLogger
 	ctx         = context.Background()
 	maxRate     = 5
-	blacklist   *bloom.IPFilter
-	batchLogger *logger.BatchLogger
 )
 
 func main() {
-	// --- Redis (rate limiter state) ---
-	redisHost := getenv("REDIS_HOST", "localhost")
-	redisPort := getenv("REDIS_PORT", "6379")
-
+	redisHost := getEnv("REDIS_HOST", "localhost")
+	redisPort := getEnv("REDIS_PORT", "6379")
 	rdb = redis.NewClient(&redis.Options{
 		Addr: fmt.Sprintf("%s:%s", redisHost, redisPort),
 	})
@@ -45,34 +45,45 @@ func main() {
 	}
 	log.Println("Successfully connected to Redis storage")
 
-	// --- Bloom filter (known-bad IP blacklist) ---
-	blacklistPath := getenv("BLACKLIST_PATH", "deployments/blacklists/dirty_ips.txt")
+	dbHost := getEnv("DB_HOST", "localhost")
+	dbPort := getEnv("DB_PORT", "5432")
+	dbUser := getEnv("DB_USER", "antifraud")
+	dbPassword := getEnv("DB_PASSWORD", "antifraud123")
+	dbName := getEnv("DB_NAME", "analytics")
+
+	connStr := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
+		dbHost, dbPort, dbUser, dbPassword, dbName)
+
 	var err error
-	blacklist, err = bloom.NewIPFilter(blacklistPath)
+	db, err = sql.Open("postgres", connStr)
 	if err != nil {
-		log.Fatalf("Failed to load blacklist: %v", err)
+		log.Fatalf("Failed to open DB connection: %v", err)
 	}
 
-	// --- Postgres (async click logging) ---
-	pgConnStr := getenv("POSTGRES_CONN", "host=localhost port=5432 user=postgres password=postgres dbname=antifraud sslmode=disable")
-	db, err := sql.Open("postgres", pgConnStr)
-	if err != nil {
-		log.Fatalf("Failed to open Postgres connection: %v", err)
-	}
+	maxOpenConns, _ := strconv.Atoi(getEnv("DB_MAX_OPEN_CONNS", "80"))
+	maxIdleConns, _ := strconv.Atoi(getEnv("DB_MAX_IDLE_CONNS", "20"))
+	db.SetMaxOpenConns(maxOpenConns)
+	db.SetMaxIdleConns(maxIdleConns)
+
 	if err := db.Ping(); err != nil {
-		log.Fatalf("Failed to connect to Postgres: %v", err)
+		log.Fatalf("Failed to connect to PostgreSQL: %v", err)
 	}
-	log.Println("Successfully connected to Postgres")
+	log.Println("Successfully connected to PostgreSQL storage")
 
-	// batchSize=200, flushInterval=2000ms
-	batchLogger = logger.NewBatchLogger(db, 200, 2000)
+	blacklistPath := getEnv("BLACKLIST_PATH", "./deployments/blacklists/dirty_ips.txt")
+	ipFilter, err = bloom.NewIPFilter(blacklistPath)
+	if err != nil {
+		log.Fatalf("Failed to initialize Bloom Filter: %v", err)
+	}
+
+	batchSize, _ := strconv.Atoi(getEnv("DB_BATCH_SIZE", "1000"))
+	flushIntervalMs, _ := strconv.Atoi(getEnv("DB_BATCH_FLUSH_MS", "500"))
+
+	batchLogger = logger.NewBatchLogger(db, batchSize, flushIntervalMs)
 	batchLogger.Start(ctx)
+	log.Println("Asynchronous Batch Logger started")
 
-	// --- HTTP server ---
-	// Order matters: Bloom filter (nanoseconds, no network) runs
-	// before the Redis rate limiter (milliseconds, network call).
-	// Known-bad IPs get rejected before ever touching Redis.
-	http.HandleFunc("/v1/click", blacklistMiddleware(rateLimitMiddleware(handleClick)))
+	http.HandleFunc("/v1/click", handleClick)
 
 	log.Println("Core Engine API Gateway started on :8080")
 	if err := http.ListenAndServe(":8080", nil); err != nil {
@@ -80,9 +91,85 @@ func main() {
 	}
 }
 
-func getenv(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
+func handleClick(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	ip := getClientIP(r)
+	ua := r.UserAgent()
+
+	var payload ClickPayload
+	campaignID := "unknown"
+
+	if err := json.NewDecoder(r.Body).Decode(&payload); err == nil {
+		if payload.CampaignID != "" {
+			campaignID = payload.CampaignID
+		}
+		if payload.UserAgent != "" {
+			ua = payload.UserAgent
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+
+	if ipFilter != nil && ipFilter.IsBlacklisted(ip) {
+		batchLogger.LogAsync(logger.ClickLog{
+			IP:         ip,
+			CampaignID: campaignID,
+			UserAgent:  ua,
+			IsBot:      true,
+			Reason:     "static_blacklist",
+		})
+
+		w.WriteHeader(http.StatusForbidden)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Blocked by static blacklist."})
+		return
+	}
+
+	key := fmt.Sprintf("rate:%s", ip)
+	currentRequests, err := rdb.Incr(ctx, key).Result()
+	if err == nil {
+		if currentRequests == 1 {
+			rdb.Expire(ctx, key, time.Second)
+		}
+
+		if int(currentRequests) > maxRate {
+			batchLogger.LogAsync(logger.ClickLog{
+				IP:         ip,
+				CampaignID: campaignID,
+				UserAgent:  ua,
+				IsBot:      true,
+				Reason:     "rate_limit_exceeded",
+			})
+
+			w.WriteHeader(http.StatusTooManyRequests)
+			json.NewEncoder(w).Encode(map[string]string{"error": "Too many requests. Real-time anti-fraud trigger."})
+			return
+		}
+	} else {
+		log.Printf("Redis error: %v", err)
+	}
+
+	batchLogger.LogAsync(logger.ClickLog{
+		IP:         ip,
+		CampaignID: campaignID,
+		UserAgent:  ua,
+		IsBot:      false,
+		Reason:     "allowed",
+	})
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{
+		"status":  "success",
+		"message": "Click registered, routing to verification queue",
+	})
+}
+
+func getEnv(key, fallback string) string {
+	if value, exists := os.LookupEnv(key); exists {
+		return value
 	}
 	return fallback
 }
@@ -100,111 +187,4 @@ func getClientIP(r *http.Request) string {
 		return r.RemoteAddr
 	}
 	return ip
-}
-
-// blacklistMiddleware is the FIRST line of defense. Bloom filter
-// lookup costs nanoseconds and needs no network call, so it runs
-// before the Redis rate-limit check. Known-bad IPs get rejected
-// before ever touching Redis.
-func blacklistMiddleware(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		ip := getClientIP(r)
-
-		if blacklist.IsBlacklisted(ip) {
-			log.Printf("[BLACKLIST] Blocked known-bad IP: %s", ip)
-
-			payload := decodePayloadBestEffort(r)
-			batchLogger.LogAsync(logger.ClickLog{
-				IP:         ip,
-				CampaignID: payload.CampaignID,
-				UserAgent:  payload.UserAgent,
-				IsBot:      true,
-				Reason:     "blacklisted_ip",
-			})
-
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusForbidden) // 403
-			json.NewEncoder(w).Encode(map[string]string{"error": "IP is blacklisted"})
-			return
-		}
-
-		next.ServeHTTP(w, r)
-	}
-}
-
-func rateLimitMiddleware(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		ip := getClientIP(r)
-
-		key := fmt.Sprintf("rate:%s", ip)
-
-		currentRequests, err := rdb.Incr(ctx, key).Result()
-		if err != nil {
-			log.Printf("Redis error: %v", err)
-			next.ServeHTTP(w, r)
-			return
-		}
-
-		if currentRequests == 1 {
-			rdb.Expire(ctx, key, time.Second)
-		}
-
-		if int(currentRequests) > maxRate {
-			log.Printf("[RATE LIMIT] Blocked malicious requests from IP: %s (Rate: %d/s)", ip, currentRequests)
-
-			payload := decodePayloadBestEffort(r)
-			batchLogger.LogAsync(logger.ClickLog{
-				IP:         ip,
-				CampaignID: payload.CampaignID,
-				UserAgent:  payload.UserAgent,
-				IsBot:      true,
-				Reason:     "rate_limited",
-			})
-
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusTooManyRequests) // 429
-			json.NewEncoder(w).Encode(map[string]string{"error": "Too many requests. Real-time anti-fraud trigger."})
-			return
-		}
-
-		next.ServeHTTP(w, r)
-	}
-}
-
-func handleClick(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	var payload ClickPayload
-	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-		http.Error(w, "Bad request", http.StatusBadRequest)
-		return
-	}
-
-	ip := getClientIP(r)
-	batchLogger.LogAsync(logger.ClickLog{
-		IP:         ip,
-		CampaignID: payload.CampaignID,
-		UserAgent:  payload.UserAgent,
-		IsBot:      false,
-		Reason:     "allowed",
-	})
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{
-		"status":  "success",
-		"message": "Click registered, routing to verification queue",
-	})
-}
-
-// decodePayloadBestEffort reads the body for logging on rejected
-// requests. Safe because we return immediately after — no later
-// handler will try to read the already-drained body.
-func decodePayloadBestEffort(r *http.Request) ClickPayload {
-	var payload ClickPayload
-	_ = json.NewDecoder(r.Body).Decode(&payload)
-	return payload
 }
