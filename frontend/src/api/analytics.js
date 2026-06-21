@@ -12,3 +12,12 @@ export async function fetchAnalyticsStats() {
   const response = await client.get('/v1/analytics/stats')
   return response.data
 }
+
+// GET /v1/analytics/logs
+// Query params: page, limit, campaign_id, is_bot, reason
+// Backend returns: { data: [...ClickLogEntry], total, page, limit, total_pages }
+// ClickLogEntry: id, ip, campaign_id, user_agent, is_bot, reason, processed_at.
+export async function fetchAnalyticsLogs(params = {}) {
+  const response = await client.get('/v1/analytics/logs', { params })
+  return response.data
+}
