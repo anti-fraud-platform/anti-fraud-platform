@@ -44,7 +44,7 @@ const logsTableHeader = (
 function Logs() {
   // Pagination state.
   const [page, setPage] = useState(1);
-  const limit = 20;
+  const [limit, setLimit] = useState(20);
 
   // Filter state.
   const [campaignId, setCampaignId] = useState('');
@@ -92,6 +92,11 @@ function Logs() {
 
   const handlePageChange = (newPage) => {
     setPage(newPage);
+  };
+
+  const handleLimitChange = (newLimit) => {
+    setLimit(newLimit);
+    setPage(1);
   };
 
   return (
@@ -177,7 +182,9 @@ function Logs() {
           <TablePagination
             page={data?.page ?? page}
             totalPages={totalPages}
+            limit={limit}
             onPageChange={handlePageChange}
+            onLimitChange={handleLimitChange}
           />
         </>
       )}
