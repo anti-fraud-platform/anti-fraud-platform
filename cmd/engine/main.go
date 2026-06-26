@@ -106,11 +106,6 @@ func handleClick(w http.ResponseWriter, r *http.Request) {
 	campaignID := "unknown"
 
 	if err := json.NewDecoder(r.Body).Decode(&payload); err == nil {
-		if payload.IP != "" {
-
-			ip = payload.IP
-		}
-
 		if payload.CampaignID != "" {
 			campaignID = payload.CampaignID
 		}
@@ -137,9 +132,18 @@ func handleClick(w http.ResponseWriter, r *http.Request) {
 
 	key := fmt.Sprintf("rate:%s", ip)
 	currentRequests, err := rdb.Incr(ctx, key).Result()
-	if err == nil {
-		if currentRequests == 1 {
-			rdb.Expire(ctx, key, time.Second)
+	if err != nil {
+		log.Printf("Redis error: %v", err)
+	} else {
+		// ExpireNX only sets a TTL if the key doesn't already have one.
+		// Calling this on every request (not just when currentRequests
+		// == 1) means a single dropped/failed Expire call can never
+		// permanently strand a key without a TTL — every subsequent
+		// request gets a chance to set it instead. Without this, a key
+		// that loses its TTL once will INCR forever and the IP gets
+		// rate-limited permanently, even after the attack stops.
+		if _, expErr := rdb.ExpireNX(ctx, key, time.Second).Result(); expErr != nil {
+			log.Printf("Redis ExpireNX error: %v", expErr)
 		}
 
 		if int(currentRequests) > maxRate {
@@ -155,8 +159,6 @@ func handleClick(w http.ResponseWriter, r *http.Request) {
 			json.NewEncoder(w).Encode(map[string]string{"error": "Too many requests. Real-time anti-fraud trigger."})
 			return
 		}
-	} else {
-		log.Printf("Redis error: %v", err)
 	}
 
 	batchLogger.LogAsync(logger.ClickLog{
@@ -173,7 +175,6 @@ func handleClick(w http.ResponseWriter, r *http.Request) {
 		"message": "Click registered, routing to verification queue",
 	})
 }
-
 func getEnv(key, fallback string) string {
 	if value, exists := os.LookupEnv(key); exists {
 		return value
