@@ -125,4 +125,3 @@ Observed memory readings stayed stable during the 10-minute load test:
 Task 2 is completed locally. The engine builds, runs with Redis and PostgreSQL, accepts the required click JSON format, returns `200 OK` for normal traffic, returns `429 Too Many Requests` under attack traffic, writes logs to PostgreSQL, and runs continuously under generator load without crashes or visible memory leaks.
 
 ### The remaining verification step is to repeat the same checks on the team VM.
-
