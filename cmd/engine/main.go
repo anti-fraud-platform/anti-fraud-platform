@@ -21,8 +21,10 @@ import (
 )
 
 type ClickPayload struct {
-	CampaignID string `json:"campaign_id"`
+	IP         string `json:"ip"`
 	UserAgent  string `json:"user_agent"`
+	CampaignID string `json:"campaign_id"`
+	Timestamp  int64  `json:"timestamp"`
 }
 
 var (
@@ -104,6 +106,11 @@ func handleClick(w http.ResponseWriter, r *http.Request) {
 	campaignID := "unknown"
 
 	if err := json.NewDecoder(r.Body).Decode(&payload); err == nil {
+		if payload.IP != "" {
+
+			ip = payload.IP
+		}
+
 		if payload.CampaignID != "" {
 			campaignID = payload.CampaignID
 		}
