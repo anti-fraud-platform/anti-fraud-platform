@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"testing"
+	"time"
 
 	"anti-fraud/internal/logger"
 
@@ -160,7 +161,6 @@ func TestHandleClickRateLimitTableDriven(t *testing.T) {
 			lastStatus := 0
 
 			body := `{
-				"ip":"` + tt.ip + `",
 				"user_agent":"test-agent",
 				"campaign_id":"camp_rate_limit",
 				"timestamp":123456789
@@ -168,7 +168,8 @@ func TestHandleClickRateLimitTableDriven(t *testing.T) {
 
 			for i := 0; i < tt.requestsToSend; i++ {
 				rr := performClickRequest(http.MethodPost, body, map[string]string{
-					"Content-Type": "application/json",
+					"Content-Type":    "application/json",
+					"X-Forwarded-For": tt.ip, // real IP now comes from the header, not the body
 				})
 
 				lastStatus = rr.Code
@@ -188,16 +189,38 @@ func TestHandleClickRateLimitTableDriven(t *testing.T) {
 		})
 	}
 }
-
 func TestHandleClickDifferentIPsDoNotShareRateLimit(t *testing.T) {
 	cleanup := setupTestEngine(t)
 	defer cleanup()
 
 	for i := 0; i < maxRate+1; i++ {
 		body := `{
-			"ip":"10.0.0.` + strconv.Itoa(i+1) + `",
 			"user_agent":"test-agent",
 			"campaign_id":"camp_unique_ips",
+			"timestamp":123456789
+		}`
+
+		rr := performClickRequest(http.MethodPost, body, map[string]string{
+			"Content-Type":    "application/json",
+			"X-Forwarded-For": "10.0.0." + strconv.Itoa(i+1),
+		})
+
+		if rr.Code != http.StatusOK {
+			t.Fatalf("expected different IP request to stay 200, got %d, body: %s", rr.Code, rr.Body.String())
+		}
+	}
+}
+func TestHandleClickIgnoresSpoofedBodyIP(t *testing.T) {
+	cleanup := setupTestEngine(t)
+	defer cleanup()
+	blockedCount := 0
+	lastStatus := 0
+
+	for i := 0; i < maxRate+1; i++ {
+		body := `{
+			"ip":"9.9.9.` + strconv.Itoa(i+1) + `",
+			"user_agent":"test-agent",
+			"campaign_id":"camp_spoof_test",
 			"timestamp":123456789
 		}`
 
@@ -205,8 +228,63 @@ func TestHandleClickDifferentIPsDoNotShareRateLimit(t *testing.T) {
 			"Content-Type": "application/json",
 		})
 
-		if rr.Code != http.StatusOK {
-			t.Fatalf("expected different IP request to stay 200, got %d, body: %s", rr.Code, rr.Body.String())
+		lastStatus = rr.Code
+		if rr.Code == http.StatusTooManyRequests {
+			blockedCount++
 		}
+	}
+
+	if lastStatus != http.StatusTooManyRequests {
+		t.Fatalf("expected spoofed-IP requests to eventually be rate-limited, got last status %d", lastStatus)
+	}
+	if blockedCount != 1 {
+		t.Fatalf("expected exactly 1 blocked request, got %d", blockedCount)
+	}
+}
+func TestHandleClickSelfHealsKeyMissingTTL(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb = redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer rdb.Close()
+
+	ipFilter = nil
+	batchLogger = logger.NewBatchLogger(nil, 100, 1000)
+	maxRate = 5
+
+	ip := "5.5.5.5"
+	key := "rate:" + ip
+
+	mr.Set(key, "999")
+	if mr.TTL(key) != 0 {
+		t.Fatalf("test setup invalid: expected no TTL, got %v", mr.TTL(key))
+	}
+
+	body := `{
+		"user_agent":"test-agent",
+		"campaign_id":"camp_self_heal",
+		"timestamp":123456789
+	}`
+
+	rr := performClickRequest(http.MethodPost, body, map[string]string{
+		"Content-Type":    "application/json",
+		"X-Forwarded-For": ip,
+	})
+	if rr.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected still-blocked on first request, got %d", rr.Code)
+	}
+	if mr.TTL(key) <= 0 {
+		t.Fatalf("expected ExpireNX to have attached a TTL to the previously-stuck key, got %v", mr.TTL(key))
+	}
+	mr.FastForward(2 * time.Second)
+
+	if mr.Exists(key) {
+		t.Fatalf("expected key to have expired after TTL elapsed, but it still exists")
+	}
+
+	rr = performClickRequest(http.MethodPost, body, map[string]string{
+		"Content-Type":    "application/json",
+		"X-Forwarded-For": ip,
+	})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected request to be allowed after key expired and reset, got %d", rr.Code)
 	}
 }
