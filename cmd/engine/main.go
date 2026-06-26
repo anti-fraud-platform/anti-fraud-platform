@@ -115,14 +115,15 @@ func handleClick(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	if ipFilter != nil && ipFilter.IsBlacklisted(ip) {
-		batchLogger.LogAsync(logger.ClickLog{
-			IP:         ip,
-			CampaignID: campaignID,
-			UserAgent:  ua,
-			IsBot:      true,
-			Reason:     "static_blacklist",
-		})
-
+		if batchLogger != nil {
+			batchLogger.LogAsync(logger.ClickLog{
+				IP:         ip,
+				CampaignID: campaignID,
+				UserAgent:  ua,
+				IsBot:      true,
+				Reason:     "static_blacklist",
+			})
+		}
 		w.WriteHeader(http.StatusForbidden)
 		json.NewEncoder(w).Encode(map[string]string{"error": "Blocked by static blacklist."})
 		return
@@ -136,14 +137,15 @@ func handleClick(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if int(currentRequests) > maxRate {
-			batchLogger.LogAsync(logger.ClickLog{
-				IP:         ip,
-				CampaignID: campaignID,
-				UserAgent:  ua,
-				IsBot:      true,
-				Reason:     "rate_limit_exceeded",
-			})
-
+			if batchLogger != nil {
+				batchLogger.LogAsync(logger.ClickLog{
+					IP:         ip,
+					CampaignID: campaignID,
+					UserAgent:  ua,
+					IsBot:      true,
+					Reason:     "rate_limit_exceeded",
+				})
+			}
 			w.WriteHeader(http.StatusTooManyRequests)
 			json.NewEncoder(w).Encode(map[string]string{"error": "Too many requests. Real-time anti-fraud trigger."})
 			return
@@ -152,13 +154,15 @@ func handleClick(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Redis error: %v", err)
 	}
 
-	batchLogger.LogAsync(logger.ClickLog{
-		IP:         ip,
-		CampaignID: campaignID,
-		UserAgent:  ua,
-		IsBot:      false,
-		Reason:     "allowed",
-	})
+	if batchLogger != nil {
+		batchLogger.LogAsync(logger.ClickLog{
+			IP:         ip,
+			CampaignID: campaignID,
+			UserAgent:  ua,
+			IsBot:      false,
+			Reason:     "allowed",
+		})
+	}
 
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{
