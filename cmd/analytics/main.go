@@ -14,6 +14,16 @@ import (
 	_ "github.com/lib/pq"
 )
 
+// ---------- Constants ----------
+
+// costPerClickUSD is the fixed CPC estimate used to compute the ad budget
+// saved by blocking a fraudulent click. Change this single value to adjust
+// every "budget saved" figure the service reports.
+const costPerClickUSD = 5.0
+
+// topBlockedIPsLimit caps how many offending IPs the stats endpoint returns.
+const topBlockedIPsLimit = 10
+
 // ---------- Response Structures ----------
 
 // CampaignStats holds aggregated data per campaign.
@@ -24,11 +34,21 @@ type CampaignStats struct {
 	SavedMoneyUSD float64 `json:"saved_money_usd"`
 }
 
+// BlockedIPStat holds how many times a single IP was blocked.
+type BlockedIPStat struct {
+	IP    string `json:"ip"`
+	Count int64  `json:"count"`
+}
+
 // StatsResponse is the full JSON response for /v1/analytics/stats.
 type StatsResponse struct {
 	TotalClicks   int64           `json:"total_clicks"`
-	BlockedBots   int64           `json:"blocked_bots"`
+	AllowedCount  int64           `json:"allowed_count"`
+	BlockedCount  int64           `json:"blocked_count"`
+	BlockedBots   int64           `json:"blocked_bots"` // kept for backward compatibility with the existing frontend
 	SavedMoneyUSD float64         `json:"saved_money_usd"`
+	BudgetSaved   float64         `json:"budget_saved"` // blocked_count * costPerClickUSD
+	TopBlockedIPs []BlockedIPStat `json:"top_blocked_ips"`
 	Campaigns     []CampaignStats `json:"campaigns"`
 }
 
@@ -60,24 +80,27 @@ const maxLimit = 100 // maximum page size to prevent abuse
 
 // ---------- Handlers ----------
 
-// statsHandler returns overall statistics and per-campaign aggregation.
+// statsHandler returns overall statistics, per-campaign aggregation,
+// and the top offending IPs. This is what the frontend reads on initial
+// page load, before the WebSocket stream takes over for live updates.
 func statsHandler(w http.ResponseWriter, r *http.Request) {
-	// Overall counts
-	var totalClicks, blockedBots int64
-	err := db.QueryRow("SELECT COUNT(*) FROM click_logs").Scan(&totalClicks)
-	if err != nil {
+	// Overall counts: total clicks and how many were blocked as bots.
+	var totalClicks, blockedCount int64
+	if err := db.QueryRow("SELECT COUNT(*) FROM click_logs").Scan(&totalClicks); err != nil {
 		log.Printf("Error counting total clicks: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
-	err = db.QueryRow("SELECT COUNT(*) FROM click_logs WHERE is_bot = true").Scan(&blockedBots)
-	if err != nil {
-		log.Printf("Error counting blocked bots: %v", err)
+	if err := db.QueryRow("SELECT COUNT(*) FROM click_logs WHERE is_bot = true").Scan(&blockedCount); err != nil {
+		log.Printf("Error counting blocked clicks: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
-	// Group by campaign
+	// Allowed = everything that was not blocked.
+	allowedCount := totalClicks - blockedCount
+
+	// Per-campaign aggregation.
 	rows, err := db.Query(`
 		SELECT campaign_id, COUNT(*) as total, COUNT(*) FILTER (WHERE is_bot = true) as blocked
 		FROM click_logs
@@ -103,18 +126,48 @@ func statsHandler(w http.ResponseWriter, r *http.Request) {
 			CampaignID:    campID,
 			TotalClicks:   total,
 			BlockedBots:   blocked,
-			SavedMoneyUSD: float64(blocked) * 5.0, // $5 saved per blocked bot
+			SavedMoneyUSD: float64(blocked) * costPerClickUSD,
 		})
 	}
 
-	saved := float64(blockedBots) * 5.0
+	// Top blocked IPs: which addresses were flagged as bots most often.
+	topRows, err := db.Query(`
+		SELECT ip, COUNT(*) as cnt
+		FROM click_logs
+		WHERE is_bot = true
+		GROUP BY ip
+		ORDER BY cnt DESC
+		LIMIT $1
+	`, topBlockedIPsLimit)
+	if err != nil {
+		log.Printf("Error querying top blocked IPs: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	defer topRows.Close()
+
+	topBlockedIPs := []BlockedIPStat{}
+	for topRows.Next() {
+		var stat BlockedIPStat
+		if err := topRows.Scan(&stat.IP, &stat.Count); err != nil {
+			log.Printf("Error scanning top blocked IP: %v", err)
+			continue
+		}
+		topBlockedIPs = append(topBlockedIPs, stat)
+	}
+
+	saved := float64(blockedCount) * costPerClickUSD
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	json.NewEncoder(w).Encode(StatsResponse{
 		TotalClicks:   totalClicks,
-		BlockedBots:   blockedBots,
+		AllowedCount:  allowedCount,
+		BlockedCount:  blockedCount,
+		BlockedBots:   blockedCount, // same value, kept so existing frontend keeps working
 		SavedMoneyUSD: saved,
+		BudgetSaved:   saved,
+		TopBlockedIPs: topBlockedIPs,
 		Campaigns:     campaigns,
 	})
 }
@@ -128,13 +181,11 @@ func logsHandler(w http.ResponseWriter, r *http.Request) {
 	isBotStr := query.Get("is_bot")
 	reason := query.Get("reason")
 
-	// Parse page number (default 1)
 	page := 1
 	if p, err := strconv.Atoi(pageStr); err == nil && p >= 1 {
 		page = p
 	}
 
-	// Parse limit with upper bound
 	limit := 20
 	if l, err := strconv.Atoi(limitStr); err == nil {
 		if l >= 1 && l <= maxLimit {
@@ -144,7 +195,6 @@ func logsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Parse is_bot as optional boolean
 	var isBot *bool
 	if isBotStr != "" {
 		b, err := strconv.ParseBool(isBotStr)
@@ -153,7 +203,6 @@ func logsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Build WHERE clause dynamically
 	whereParts := []string{}
 	args := []interface{}{}
 	argCounter := 1
@@ -179,7 +228,6 @@ func logsHandler(w http.ResponseWriter, r *http.Request) {
 		whereClause = "WHERE " + strings.Join(whereParts, " AND ")
 	}
 
-	// Count total matching records (for pagination metadata)
 	countQuery := "SELECT COUNT(*) FROM click_logs " + whereClause
 	var total int64
 	if err := db.QueryRow(countQuery, args...).Scan(&total); err != nil {
@@ -191,7 +239,6 @@ func logsHandler(w http.ResponseWriter, r *http.Request) {
 	offset := (page - 1) * limit
 	totalPages := int((total + int64(limit) - 1) / int64(limit))
 
-	// Fetch actual data with ordering and limit/offset
 	dataQuery := fmt.Sprintf(`
 		SELECT id, ip, campaign_id, user_agent, is_bot, reason, processed_at
 		FROM click_logs
