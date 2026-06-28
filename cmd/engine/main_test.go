@@ -215,10 +215,15 @@ func TestHandleClickDifferentIPsDoNotShareRateLimit(t *testing.T) {
 }
 func TestClickIntegrationPipeline(t *testing.T) {
 	ctx := context.Background()
-	rdb = redis.NewClient(&redis.Options{
-		Addr: "127.0.0.1:6380",
-	})
 
+	addr := os.Getenv("TEST_REDIS_ADDR")
+	if addr == "" {
+		addr = "127.0.0.1:6380" // local docker-compose default
+	}
+	rdb = redis.NewClient(&redis.Options{
+		Addr: addr,
+	})
+	
 	testIP := "123.45.67.89"
 	rdb.Del(ctx, "rate:"+testIP)
 
