@@ -2,12 +2,15 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strconv"
 	"testing"
 	"time"
 
+	"anti-fraud/internal/bloom"
 	"anti-fraud/internal/logger"
 
 	"github.com/alicebob/miniredis/v2"
@@ -210,6 +213,102 @@ func TestHandleClickDifferentIPsDoNotShareRateLimit(t *testing.T) {
 		}
 	}
 }
+func TestClickIntegrationPipeline(t *testing.T) {
+	ctx := context.Background()
+
+	addr := os.Getenv("TEST_REDIS_ADDR")
+	if addr == "" {
+		addr = "127.0.0.1:6380" // local docker-compose default
+	}
+	rdb = redis.NewClient(&redis.Options{
+		Addr: addr,
+	})
+	
+	testIP := "123.45.67.89"
+	rdb.Del(ctx, "rate:"+testIP)
+
+	maxRate = 5
+
+	ts := httptest.NewServer(http.HandlerFunc(handleClick))
+	defer ts.Close()
+
+	client := &http.Client{}
+
+	payload := []byte(`{"campaign_id": "test_campaign", "user_agent": "Mozilla/5.0"}`)
+	req, _ := http.NewRequest("POST", ts.URL+"/v1/click", bytes.NewBuffer(payload))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Forwarded-For", testIP)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("Failed to send request: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("Expected status 200 for clean request, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	for i := 1; i <= maxRate; i++ {
+		req, _ := http.NewRequest("POST", ts.URL+"/v1/click", bytes.NewBuffer(payload))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Forwarded-For", testIP)
+
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatalf("Failed to send request during burst: %v", err)
+		}
+
+		if i == maxRate {
+			if resp.StatusCode != http.StatusTooManyRequests {
+				t.Errorf("Expected status 429 on request number %d, but got %d", i+1, resp.StatusCode)
+			}
+		} else {
+			if resp.StatusCode != http.StatusOK {
+				t.Errorf("Expected status 200 for request %d under threshold, got %d", i+1, resp.StatusCode)
+			}
+		}
+		resp.Body.Close()
+	}
+}
+
+func TestHandleClickBloomFilterBlacklist(t *testing.T) {
+	tmpFile, err := os.CreateTemp("", "test_dirty_ips_*.txt")
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+	defer os.Remove(tmpFile.Name())
+
+	badIP := "99.99.99.99"
+	if _, err := tmpFile.WriteString(badIP + "\n"); err != nil {
+		t.Fatalf("Failed to write to temp file: %v", err)
+	}
+	tmpFile.Close()
+
+	var bloomError error
+	importBloomPath := "./../../deployments/blacklists/dirty_ips.txt"
+	_ = importBloomPath
+
+	ipFilter, bloomError = bloom.NewIPFilter(tmpFile.Name())
+	if bloomError != nil {
+		t.Fatalf("Failed to initialize bloom filter for test: %v", bloomError)
+	}
+	defer func() { ipFilter = nil }() // Сбрасываем фильтр после теста
+
+	batchLogger = nil
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/click", bytes.NewReader([]byte(`{}`)))
+	req.Header.Set("X-Forwarded-For", badIP)
+	req.Header.Set("Content-Type", "application/json")
+
+	rr := httptest.NewRecorder()
+
+	handleClick(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("Expected status 403 Forbidden for blacklisted IP, got %d", rr.Code)
+	}
+}
+
 func TestHandleClickIgnoresSpoofedBodyIP(t *testing.T) {
 	cleanup := setupTestEngine(t)
 	defer cleanup()
@@ -241,6 +340,7 @@ func TestHandleClickIgnoresSpoofedBodyIP(t *testing.T) {
 		t.Fatalf("expected exactly 1 blocked request, got %d", blockedCount)
 	}
 }
+
 func TestHandleClickSelfHealsKeyMissingTTL(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb = redis.NewClient(&redis.Options{Addr: mr.Addr()})
