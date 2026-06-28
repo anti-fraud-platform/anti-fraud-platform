@@ -223,7 +223,7 @@ func TestClickIntegrationPipeline(t *testing.T) {
 	rdb = redis.NewClient(&redis.Options{
 		Addr: addr,
 	})
-	
+
 	testIP := "123.45.67.89"
 	rdb.Del(ctx, "rate:"+testIP)
 
