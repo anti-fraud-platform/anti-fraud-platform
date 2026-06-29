@@ -80,6 +80,19 @@ type BlacklistSummaryResponse struct {
 	AutoBlocked24h  int64 `json:"auto_blocked_24h"`
 }
 
+// DailyTrend holds aggregated traffic data for a single day.
+type DailyTrend struct {
+	Date         string `json:"date"` // Формат: YYYY-MM-DD
+	TotalClicks  int64  `json:"total_clicks"`
+	AllowedCount int64  `json:"allowed_count"`
+	BlockedCount int64  `json:"blocked_count"`
+}
+
+// TrendResponse represents the array payload for the 7-day chart.
+type TrendResponse struct {
+	Data []DailyTrend `json:"data"`
+}
+
 // ---------- Global Variables ----------
 
 var db *sql.DB
@@ -361,6 +374,41 @@ func blacklistSummaryHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(summary)
 }
 
+// trendHandler returns day-over-day aggregated traffic for the last 7 days.
+func trendHandler(w http.ResponseWriter, r *http.Request) {
+	rows, err := db.Query(`
+		SELECT 
+			TO_CHAR(processed_at, 'YYYY-MM-DD') as log_date,
+			COUNT(*) as total,
+			COUNT(*) FILTER (WHERE is_bot = false) as allowed,
+			COUNT(*) FILTER (WHERE is_bot = true) as blocked
+		FROM click_logs
+		WHERE processed_at >= NOW() - INTERVAL '7 days'
+		GROUP BY log_date
+		ORDER BY log_date ASC
+	`)
+	if err != nil {
+		log.Printf("Error querying daily trends: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	trendData := []DailyTrend{}
+	for rows.Next() {
+		var td DailyTrend
+		if err := rows.Scan(&td.Date, &td.TotalClicks, &td.AllowedCount, &td.BlockedCount); err != nil {
+			log.Printf("Error scanning daily trend row: %v", err)
+			continue
+		}
+		trendData = append(trendData, td)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	json.NewEncoder(w).Encode(TrendResponse{Data: trendData})
+}
+
 // ---------- Helper Functions ----------
 
 // getEnv retrieves an environment variable or returns a fallback value.
@@ -396,6 +444,7 @@ func main() {
 	http.HandleFunc("/v1/analytics/stats", statsHandler)
 	http.HandleFunc("/v1/analytics/logs", logsHandler)
 	http.HandleFunc("/v1/analytics/blacklist/summary", blacklistSummaryHandler)
+	http.HandleFunc("/v1/analytics/trend", trendHandler)
 
 	port := getEnv("ANALYTICS_PORT", "8081")
 	log.Printf("Analytics service listening on :%s", port)
