@@ -180,6 +180,8 @@ func logsHandler(w http.ResponseWriter, r *http.Request) {
 	campaignID := query.Get("campaign_id")
 	isBotStr := query.Get("is_bot")
 	reason := query.Get("reason")
+	fromStr := query.Get("from")
+	toStr := query.Get("to")
 
 	page := 1
 	if p, err := strconv.Atoi(pageStr); err == nil && p >= 1 {
@@ -221,6 +223,33 @@ func logsHandler(w http.ResponseWriter, r *http.Request) {
 		whereParts = append(whereParts, fmt.Sprintf("reason = $%d", argCounter))
 		args = append(args, reason)
 		argCounter++
+	}
+
+	if fromStr != "" {
+		tFrom, err := time.Parse(time.RFC3339, fromStr)
+		if err != nil {
+			tFrom, err = time.Parse("2006-01-02", fromStr)
+		}
+		if err == nil {
+			whereParts = append(whereParts, fmt.Sprintf("processed_at >= $%d", argCounter))
+			args = append(args, tFrom)
+			argCounter++
+		}
+	}
+
+	if toStr != "" {
+		tTo, err := time.Parse(time.RFC3339, toStr)
+		if err != nil {
+			tTo, err = time.Parse("2006-01-02", toStr)
+		}
+		if err == nil {
+			if !strings.Contains(toStr, "T") {
+				tTo = tTo.Add(23*time.Hour + 59*time.Minute + 59*time.Second)
+			}
+			whereParts = append(whereParts, fmt.Sprintf("processed_at <= $%d", argCounter))
+			args = append(args, tTo)
+			argCounter++
+		}
 	}
 
 	whereClause := ""
