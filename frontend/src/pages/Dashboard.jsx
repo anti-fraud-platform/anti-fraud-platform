@@ -19,16 +19,19 @@ function Dashboard() {
         { label: 'Total clicks', value: formatNumber(data.total_clicks), danger: false },
         { label: 'Blocked bots', value: formatNumber(data.blocked_bots), danger: true },
         { label: 'Money saved', value: formatMoney(data.saved_money_usd), danger: false },
+        { label: 'Budget saved', value: formatMoney(data.budget_saved), danger: false },
       ]
     : [];
 
   const campaigns = data?.campaigns ?? [];
+  const topBlockedIPs = data?.top_blocked_ips ?? [];
 
   return (
     <Layout title="Dashboard">
       {loading && !data && (
         <>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+            <SkeletonCard />
             <SkeletonCard />
             <SkeletonCard />
             <SkeletonCard />
@@ -54,42 +57,74 @@ function Dashboard() {
             </p>
           )}
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
             {statItems.map((item, idx) => (
               <StatCard key={idx} label={item.label} value={item.value} danger={item.danger} />
             ))}
           </div>
 
-          <div className="border border-border rounded-lg overflow-hidden">
-            <div className="px-4 py-3 border-b border-border">
-              <h2 className="text-sm font-semibold">Campaign performance</h2>
-            </div>
-            {campaigns.length === 0 ? (
-              <p className="px-4 py-6 text-sm text-text-muted text-center">
-                No campaign data yet.
-              </p>
-            ) : (
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="bg-surface text-text-muted text-left">
-                    <th className="px-4 py-2.5 font-medium">Campaign</th>
-                    <th className="px-4 py-2.5 font-medium text-right">Clicks</th>
-                    <th className="px-4 py-2.5 font-medium text-right">Bots</th>
-                    <th className="px-4 py-2.5 font-medium text-right">Saved</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {campaigns.map((c) => (
-                    <tr key={c.campaign_id} className="border-t border-border">
-                      <td className="px-4 py-2.5 font-mono">{c.campaign_id}</td>
-                      <td className="px-4 py-2.5 text-right">{formatNumber(c.total_clicks)}</td>
-                      <td className="px-4 py-2.5 text-right text-danger">{formatNumber(c.blocked_bots)}</td>
-                      <td className="px-4 py-2.5 text-right">{formatMoney(c.saved_money_usd)}</td>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            {/* Campaign performance */}
+            <div className="border border-border rounded-lg overflow-hidden">
+              <div className="px-4 py-3 border-b border-border">
+                <h2 className="text-sm font-semibold">Campaign performance</h2>
+              </div>
+              {campaigns.length === 0 ? (
+                <p className="px-4 py-6 text-sm text-text-muted text-center">
+                  No campaign data yet.
+                </p>
+              ) : (
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-surface text-text-muted text-left">
+                      <th className="px-4 py-2.5 font-medium">Campaign</th>
+                      <th className="px-4 py-2.5 font-medium text-right">Clicks</th>
+                      <th className="px-4 py-2.5 font-medium text-right">Bots</th>
+                      <th className="px-4 py-2.5 font-medium text-right">Saved</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
+                  </thead>
+                  <tbody>
+                    {campaigns.map((c) => (
+                      <tr key={c.campaign_id} className="border-t border-border">
+                        <td className="px-4 py-2.5 font-mono">{c.campaign_id}</td>
+                        <td className="px-4 py-2.5 text-right">{formatNumber(c.total_clicks)}</td>
+                        <td className="px-4 py-2.5 text-right text-danger">{formatNumber(c.blocked_bots)}</td>
+                        <td className="px-4 py-2.5 text-right">{formatMoney(c.saved_money_usd)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            {/* Top blocked IPs */}
+            <div className="border border-border rounded-lg overflow-hidden">
+              <div className="px-4 py-3 border-b border-border">
+                <h2 className="text-sm font-semibold">Top blocked IPs</h2>
+              </div>
+              {topBlockedIPs.length === 0 ? (
+                <p className="px-4 py-6 text-sm text-text-muted text-center">
+                  No blocked IPs yet.
+                </p>
+              ) : (
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-surface text-text-muted text-left">
+                      <th className="px-4 py-2.5 font-medium">IP address</th>
+                      <th className="px-4 py-2.5 font-medium text-right">Blocks</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {topBlockedIPs.map((row) => (
+                      <tr key={row.ip} className="border-t border-border">
+                        <td className="px-4 py-2.5 font-mono">{row.ip}</td>
+                        <td className="px-4 py-2.5 text-right text-danger">{formatNumber(row.count)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
           </div>
         </>
       )}

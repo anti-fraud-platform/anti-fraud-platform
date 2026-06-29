@@ -5,38 +5,45 @@ import (
 	"time"
 )
 
-type fakeClock struct {
+type FakeClock struct {
 	wallTime time.Time
 }
 
-func (f *fakeClock) Now() time.Time {
+func (f *FakeClock) Now() time.Time {
 	return f.wallTime
 }
 
-func (f *fakeClock) Advance(d time.Duration) {
+func (f *FakeClock) Advance(d time.Duration) {
 	f.wallTime = f.wallTime.Add(d)
 }
 
-func TestRateLimiterResetsAfterWindow(t *testing.T) {
+func TestRateLimiter(t *testing.T) {
 	startTime := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
-	clock := &fakeClock{wallTime: startTime}
+	fakeClock := &FakeClock{wallTime: startTime}
 
-	limiter := NewRateLimiter(5, time.Second, clock)
+	maxRate := 5
+	window := time.Second
+	rl := NewRateLimiter(maxRate, window, fakeClock)
+
 	ip := "192.168.1.1"
 
-	for i := 0; i < 5; i++ {
-		if !limiter.Allow(ip) {
-			t.Fatalf("expected request %d to pass inside the current window", i+1)
+	if !rl.Allow(ip) {
+		t.Errorf("Expected the very first request to be allowed")
+	}
+
+	for i := 2; i <= maxRate; i++ {
+		if !rl.Allow(ip) {
+			t.Errorf("Expected request %d to be allowed (under/at the edge of threshold)", i)
 		}
 	}
 
-	if limiter.Allow(ip) {
-		t.Fatal("expected request 6 to be blocked")
+	if rl.Allow(ip) {
+		t.Errorf("Expected request %d to be blocked (strictly over threshold)", maxRate+1)
 	}
 
-	clock.Advance(time.Second + time.Millisecond)
+	fakeClock.Advance(window + time.Millisecond)
 
-	if !limiter.Allow(ip) {
-		t.Fatal("expected limiter to reset after the window expires")
+	if !rl.Allow(ip) {
+		t.Errorf("Expected request to be allowed after the time window has passed and counter reset")
 	}
 }
