@@ -5,6 +5,11 @@ stages:
 backend:
   stage: test
   image: golang:1.26-alpine
+  services:
+    - alias: redis
+      name: redis:7-alpine
+  variables:
+    TEST_REDIS_ADDR: "redis:6379"
   before_script:
     - apk add --no-cache git
   script:
@@ -37,7 +42,6 @@ docker-build:
   variables:
     DOCKER_TLS_CERTDIR: "/certs"
   script:
-    # просто проверяем что образы собираются, push пока не делаем
     - docker build -f Dockerfile.engine -t antifraud-engine:ci .
     - docker build -f Dockerfile.analytics -t antifraud-analytics:ci .
     - docker build -f frontend/Dockerfile -t antifraud-frontend:ci .
