@@ -14,7 +14,7 @@ function Blacklist() {
   const fetchBlacklist = async () => {
     try {
       setLoading(true);
-      const response = await fetch('http://localhost:8082/v1/analytics/blacklist/ips'); 
+      const response = await fetch('/api/v1/analytics/blacklist/ips'); 
       if (!response.ok) throw new Error('Failed to fetch');
       const data = await response.json();
       setBlacklistData(data.items || []);
