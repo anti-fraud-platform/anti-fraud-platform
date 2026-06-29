@@ -72,6 +72,46 @@ type LogsResponse struct {
 	TotalPages int             `json:"total_pages"`
 }
 
+// BlacklistSummaryResponse holds statistics for the blacklist dashboard metrics.
+type BlacklistSummaryResponse struct {
+	TotalBlocked    int64 `json:"total_blocked"`
+	StaticBlacklist int64 `json:"static_blacklist"`
+	RateLimited     int64 `json:"rate_limited"`
+	AutoBlocked24h  int64 `json:"auto_blocked_24h"`
+}
+
+// DailyTrend holds aggregated traffic data for a single day.
+type DailyTrend struct {
+	Date         string `json:"date"` // Формат: YYYY-MM-DD
+	TotalClicks  int64  `json:"total_clicks"`
+	AllowedCount int64  `json:"allowed_count"`
+	BlockedCount int64  `json:"blocked_count"`
+}
+
+// TrendResponse represents the array payload for the 7-day chart.
+type TrendResponse struct {
+	Data []DailyTrend `json:"data"`
+}
+
+// AuditEvent represents a system action log entry for the dashboard feed.
+type AuditEvent struct {
+	ID         int64     `json:"id"`
+	ActionText string    `json:"action_text"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+// BlacklistIPEntry represents a single blocked IP with its statistics.
+type BlacklistIPEntry struct {
+	IP           string `json:"ip"`
+	BlockCount   int64  `json:"block_count"`
+	FirstBlocked string `json:"first_blocked"`
+	LastBlocked  string `json:"last_blocked"`
+}
+
+// BlacklistIPsResponse holds the list of blocked IPs.
+type BlacklistIPsResponse struct {
+	Items []BlacklistIPEntry `json:"items"`
+	Total int64              `json:"total"`
+}
 // ---------- Global Variables ----------
 
 var db *sql.DB
@@ -180,6 +220,8 @@ func logsHandler(w http.ResponseWriter, r *http.Request) {
 	campaignID := query.Get("campaign_id")
 	isBotStr := query.Get("is_bot")
 	reason := query.Get("reason")
+	fromStr := query.Get("from")
+	toStr := query.Get("to")
 
 	page := 1
 	if p, err := strconv.Atoi(pageStr); err == nil && p >= 1 {
@@ -221,6 +263,33 @@ func logsHandler(w http.ResponseWriter, r *http.Request) {
 		whereParts = append(whereParts, fmt.Sprintf("reason = $%d", argCounter))
 		args = append(args, reason)
 		argCounter++
+	}
+
+	if fromStr != "" {
+		tFrom, err := time.Parse(time.RFC3339, fromStr)
+		if err != nil {
+			tFrom, err = time.Parse("2006-01-02", fromStr)
+		}
+		if err == nil {
+			whereParts = append(whereParts, fmt.Sprintf("processed_at >= $%d", argCounter))
+			args = append(args, tFrom)
+			argCounter++
+		}
+	}
+
+	if toStr != "" {
+		tTo, err := time.Parse(time.RFC3339, toStr)
+		if err != nil {
+			tTo, err = time.Parse("2006-01-02", toStr)
+		}
+		if err == nil {
+			if !strings.Contains(toStr, "T") {
+				tTo = tTo.Add(23*time.Hour + 59*time.Minute + 59*time.Second)
+			}
+			whereParts = append(whereParts, fmt.Sprintf("processed_at <= $%d", argCounter))
+			args = append(args, tTo)
+			argCounter++
+		}
 	}
 
 	whereClause := ""
@@ -287,6 +356,158 @@ func logsHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
+// blacklistSummaryHandler returns summary metrics specifically for the blacklist page.
+func blacklistSummaryHandler(w http.ResponseWriter, r *http.Request) {
+	var summary BlacklistSummaryResponse
+
+	err := db.QueryRow("SELECT COUNT(*) FROM click_logs WHERE is_bot = true").Scan(&summary.TotalBlocked)
+	if err != nil {
+		log.Printf("Error querying total blocked: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	err = db.QueryRow("SELECT COUNT(*) FROM click_logs WHERE reason = 'static_blacklist'").Scan(&summary.StaticBlacklist)
+	if err != nil {
+		log.Printf("Error querying static blacklist count: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	err = db.QueryRow("SELECT COUNT(*) FROM click_logs WHERE reason = 'rate_limit_exceeded'").Scan(&summary.RateLimited)
+	if err != nil {
+		log.Printf("Error querying rate limit count: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	err = db.QueryRow("SELECT COUNT(*) FROM click_logs WHERE is_bot = true AND processed_at >= NOW() - INTERVAL '24 hours'").Scan(&summary.AutoBlocked24h)
+	if err != nil {
+		log.Printf("Error querying 24h blocked count: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	json.NewEncoder(w).Encode(summary)
+}
+
+// trendHandler returns day-over-day aggregated traffic for the last 7 days.
+func trendHandler(w http.ResponseWriter, r *http.Request) {
+	rows, err := db.Query(`
+		SELECT 
+			TO_CHAR(processed_at, 'YYYY-MM-DD') as log_date,
+			COUNT(*) as total,
+			COUNT(*) FILTER (WHERE is_bot = false) as allowed,
+			COUNT(*) FILTER (WHERE is_bot = true) as blocked
+		FROM click_logs
+		WHERE processed_at >= NOW() - INTERVAL '7 days'
+		GROUP BY log_date
+		ORDER BY log_date ASC
+	`)
+	if err != nil {
+		log.Printf("Error querying daily trends: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	trendData := []DailyTrend{}
+	for rows.Next() {
+		var td DailyTrend
+		if err := rows.Scan(&td.Date, &td.TotalClicks, &td.AllowedCount, &td.BlockedCount); err != nil {
+			log.Printf("Error scanning daily trend row: %v", err)
+			continue
+		}
+		trendData = append(trendData, td)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	json.NewEncoder(w).Encode(TrendResponse{Data: trendData})
+}
+
+// auditEventsHandler returns the latest system events for the recent activity feed.
+func auditEventsHandler(w http.ResponseWriter, r *http.Request) {
+	rows, err := db.Query("SELECT id, action_text, created_at FROM audit_events ORDER BY created_at DESC LIMIT 20")
+	if err != nil {
+		log.Printf("Error querying audit events: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	events := []AuditEvent{}
+	for rows.Next() {
+		var ev AuditEvent
+		if err := rows.Scan(&ev.ID, &ev.ActionText, &ev.CreatedAt); err != nil {
+			log.Printf("Error scanning audit event: %v", err)
+			continue
+		}
+		events = append(events, ev)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	json.NewEncoder(w).Encode(events)
+}
+// blacklistIPsHandler returns the list of IPs blocked due to static_blacklist
+func blacklistIPsHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+	
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	
+	query := `
+		SELECT 
+			ip,
+			COUNT(*) as block_count,
+			MIN(processed_at) as first_blocked,
+			MAX(processed_at) as last_blocked
+		FROM click_logs
+		WHERE reason = 'static_blacklist'
+		GROUP BY ip
+		ORDER BY last_blocked DESC
+		LIMIT 50
+	`
+
+	rows, err := db.Query(query)
+	if err != nil {
+		log.Printf("Error querying blacklist IPs: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	items := []BlacklistIPEntry{}
+	for rows.Next() {
+		var entry BlacklistIPEntry
+		var firstBlocked, lastBlocked time.Time
+		if err := rows.Scan(&entry.IP, &entry.BlockCount, &firstBlocked, &lastBlocked); err != nil {
+			log.Printf("Error scanning blacklist row: %v", err)
+			continue
+		}
+		entry.FirstBlocked = firstBlocked.Format("2006-01-02 15:04")
+		entry.LastBlocked = lastBlocked.Format("2006-01-02 15:04")
+		items = append(items, entry)
+	}
+
+	var total int64
+	db.QueryRow("SELECT COUNT(DISTINCT ip) FROM click_logs WHERE reason = 'static_blacklist'").Scan(&total)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	json.NewEncoder(w).Encode(BlacklistIPsResponse{
+		Items: items,
+		Total: total,
+	})
+}
 // ---------- Helper Functions ----------
 
 // getEnv retrieves an environment variable or returns a fallback value.
@@ -321,6 +542,10 @@ func main() {
 
 	http.HandleFunc("/v1/analytics/stats", statsHandler)
 	http.HandleFunc("/v1/analytics/logs", logsHandler)
+	http.HandleFunc("/v1/analytics/blacklist/summary", blacklistSummaryHandler)
+	http.HandleFunc("/v1/analytics/blacklist/ips", blacklistIPsHandler) 
+	http.HandleFunc("/v1/analytics/trend", trendHandler)
+	http.HandleFunc("/v1/analytics/events", auditEventsHandler)
 
 	port := getEnv("ANALYTICS_PORT", "8081")
 	log.Printf("Analytics service listening on :%s", port)
