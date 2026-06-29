@@ -93,6 +93,13 @@ type TrendResponse struct {
 	Data []DailyTrend `json:"data"`
 }
 
+// AuditEvent represents a system action log entry for the dashboard feed.
+type AuditEvent struct {
+	ID         int64     `json:"id"`
+	ActionText string    `json:"action_text"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
 // ---------- Global Variables ----------
 
 var db *sql.DB
@@ -409,6 +416,31 @@ func trendHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(TrendResponse{Data: trendData})
 }
 
+// auditEventsHandler returns the latest system events for the recent activity feed.
+func auditEventsHandler(w http.ResponseWriter, r *http.Request) {
+	rows, err := db.Query("SELECT id, action_text, created_at FROM audit_events ORDER BY created_at DESC LIMIT 20")
+	if err != nil {
+		log.Printf("Error querying audit events: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	events := []AuditEvent{}
+	for rows.Next() {
+		var ev AuditEvent
+		if err := rows.Scan(&ev.ID, &ev.ActionText, &ev.CreatedAt); err != nil {
+			log.Printf("Error scanning audit event: %v", err)
+			continue
+		}
+		events = append(events, ev)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	json.NewEncoder(w).Encode(events)
+}
+
 // ---------- Helper Functions ----------
 
 // getEnv retrieves an environment variable or returns a fallback value.
@@ -445,6 +477,7 @@ func main() {
 	http.HandleFunc("/v1/analytics/logs", logsHandler)
 	http.HandleFunc("/v1/analytics/blacklist/summary", blacklistSummaryHandler)
 	http.HandleFunc("/v1/analytics/trend", trendHandler)
+	http.HandleFunc("/v1/analytics/events", auditEventsHandler)
 
 	port := getEnv("ANALYTICS_PORT", "8081")
 	log.Printf("Analytics service listening on :%s", port)
