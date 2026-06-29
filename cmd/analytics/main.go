@@ -72,6 +72,14 @@ type LogsResponse struct {
 	TotalPages int             `json:"total_pages"`
 }
 
+// BlacklistSummaryResponse holds statistics for the blacklist dashboard metrics.
+type BlacklistSummaryResponse struct {
+	TotalBlocked    int64 `json:"total_blocked"`
+	StaticBlacklist int64 `json:"static_blacklist"`
+	RateLimited     int64 `json:"rate_limited"`
+	AutoBlocked24h  int64 `json:"auto_blocked_24h"`
+}
+
 // ---------- Global Variables ----------
 
 var db *sql.DB
@@ -316,6 +324,43 @@ func logsHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
+// blacklistSummaryHandler returns summary metrics specifically for the blacklist page.
+func blacklistSummaryHandler(w http.ResponseWriter, r *http.Request) {
+	var summary BlacklistSummaryResponse
+
+	err := db.QueryRow("SELECT COUNT(*) FROM click_logs WHERE is_bot = true").Scan(&summary.TotalBlocked)
+	if err != nil {
+		log.Printf("Error querying total blocked: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	err = db.QueryRow("SELECT COUNT(*) FROM click_logs WHERE reason = 'static_blacklist'").Scan(&summary.StaticBlacklist)
+	if err != nil {
+		log.Printf("Error querying static blacklist count: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	err = db.QueryRow("SELECT COUNT(*) FROM click_logs WHERE reason = 'rate_limit_exceeded'").Scan(&summary.RateLimited)
+	if err != nil {
+		log.Printf("Error querying rate limit count: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	err = db.QueryRow("SELECT COUNT(*) FROM click_logs WHERE is_bot = true AND processed_at >= NOW() - INTERVAL '24 hours'").Scan(&summary.AutoBlocked24h)
+	if err != nil {
+		log.Printf("Error querying 24h blocked count: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	json.NewEncoder(w).Encode(summary)
+}
+
 // ---------- Helper Functions ----------
 
 // getEnv retrieves an environment variable or returns a fallback value.
@@ -350,6 +395,7 @@ func main() {
 
 	http.HandleFunc("/v1/analytics/stats", statsHandler)
 	http.HandleFunc("/v1/analytics/logs", logsHandler)
+	http.HandleFunc("/v1/analytics/blacklist/summary", blacklistSummaryHandler)
 
 	port := getEnv("ANALYTICS_PORT", "8081")
 	log.Printf("Analytics service listening on :%s", port)
