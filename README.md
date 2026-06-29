@@ -85,6 +85,7 @@ curl -X POST http://localhost:8080/v1/click \
 | 200 | Click accepted |
 | 403 | IP is on the static blacklist |
 | 429 | More than 5 requests per second from this IP |
+
 ![How It works](docs/detection%20pipeline.jpeg)
 
 ## Traffic generator
