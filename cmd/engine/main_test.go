@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -214,20 +213,10 @@ func TestHandleClickDifferentIPsDoNotShareRateLimit(t *testing.T) {
 	}
 }
 func TestClickIntegrationPipeline(t *testing.T) {
-	ctx := context.Background()
-
-	addr := os.Getenv("TEST_REDIS_ADDR")
-	if addr == "" {
-		addr = "127.0.0.1:6380" // local docker-compose default
-	}
-	rdb = redis.NewClient(&redis.Options{
-		Addr: addr,
-	})
+	cleanup := setupTestEngine(t)
+	defer cleanup()
 
 	testIP := "123.45.67.89"
-	rdb.Del(ctx, "rate:"+testIP)
-
-	maxRate = 5
 
 	ts := httptest.NewServer(http.HandlerFunc(handleClick))
 	defer ts.Close()
