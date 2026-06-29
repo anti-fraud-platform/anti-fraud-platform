@@ -1,5 +1,6 @@
-# Anti-Fraud Platform ![LOGO](docs/anti-fraud.png)
+<img src="docs/anti-fraud.png" width="40" align="right" />
 
+# Anti-Fraud Platform
 Real-time click fraud detection for ad traffic. Built with Go, Redis, PostgreSQL and React.
 
 Each click hits three checks: a Bloom filter against 12,000 known bad IPs, a Redis rate limiter (5 req/s per IP), and an async batch logger that writes to Postgres every 500ms. A separate analytics service reads from the same DB and powers the dashboard.
