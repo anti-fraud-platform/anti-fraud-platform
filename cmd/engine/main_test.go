@@ -274,27 +274,27 @@ func TestHandleClickBloomFilterBlacklist(t *testing.T) {
 	tmpFile.Close()
 
 	var bloomError error
-	importBloomPath := "./../../deployments/blacklists/dirty_ips.txt"
-	_ = importBloomPath
-
 	ipFilter, bloomError = bloom.NewIPFilter(tmpFile.Name())
 	if bloomError != nil {
 		t.Fatalf("Failed to initialize bloom filter for test: %v", bloomError)
 	}
-	defer func() { ipFilter = nil }() // Сбрасываем фильтр после теста
+	defer func() { ipFilter = nil }() 
 
 	batchLogger = nil
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/click", bytes.NewReader([]byte(`{}`)))
-	req.Header.Set("X-Forwarded-For", badIP)
-	req.Header.Set("Content-Type", "application/json")
+	body := `{
+		"user_agent":"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
+		"campaign_id":"camp_bloom_test",
+		"timestamp":123456789
+	}`
 
-	rr := httptest.NewRecorder()
-
-	handleClick(rr, req)
+	rr := performClickRequest(http.MethodPost, body, map[string]string{
+		"Content-Type":    "application/json",
+		"X-Forwarded-For": badIP,
+	})
 
 	if rr.Code != http.StatusForbidden {
-		t.Errorf("Expected status 403 Forbidden for blacklisted IP, got %d", rr.Code)
+		t.Errorf("Expected status 403 Forbidden for blacklisted IP, got %d, body: %s", rr.Code, rr.Body.String())
 	}
 }
 
