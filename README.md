@@ -37,6 +37,13 @@ git clone git@github.com:kage-ops-dev/anti-fraud-platform.git
 cd anti-fraud-platform
 ```
 
+If SSH access to GitHub is not configured on the machine, use HTTPS instead:
+
+```bash
+git clone https://github.com/anti-fraud-platform/anti-fraud-platform.git
+cd anti-fraud-platform
+```
+
 Start the full local stack:
 
 ```bash
@@ -59,6 +66,12 @@ When the stack is healthy, these endpoints should be reachable:
 
 For a clean-room setup check, follow the full step-by-step guide in [docs/SETUP.md](docs/SETUP.md).
 
+To stop the stack:
+
+```bash
+docker-compose down
+```
+
 ## Run the Go test suite
 
 Run all Go tests from the repository root:
@@ -71,7 +84,7 @@ Expected result:
 
 ```text
 ?   	anti-fraud/cmd/analytics	[no test files]
-?   	anti-fraud/cmd/engine	[no test files]
+ok  	anti-fraud/cmd/engine	0.xxxs
 ?   	anti-fraud/cmd/generator	[no test files]
 ?   	anti-fraud/internal/bloom	[no test files]
 ok  	anti-fraud/internal/engine	0.xxxs
@@ -79,7 +92,7 @@ ok  	anti-fraud/internal/engine	0.xxxs
 ?   	anti-fraud/internal/models	[no test files]
 ```
 
-The exact test duration will differ, but `internal/engine` should report `ok` and the command should exit with code `0`.
+The exact timings will differ, but both `cmd/engine` and `internal/engine` should report `ok`, and the command should exit with code `0`.
 
 ## CI
 
@@ -93,8 +106,15 @@ If either command fails, the workflow fails.
 
 ## Remote deployment status
 
-The repository changes in this branch prepare the project for local verification and CI.
-The public deployment required by Task 6 is still an external step because it needs access to a hosting account or VM.
+Local setup and CI are ready in the repository.
+The public deployment required by Task 6 is a separate infrastructure step and depends on access to a hosting account or VM.
+
+At the time of this README revision, there is no public URL or VM endpoint committed here yet.
+When the hosted environment is provisioned, this section must be updated with:
+
+- the public frontend URL
+- any API base URL that the TA needs
+- VM or SSH details if the team chooses VM deployment instead of managed hosting
 
 For this stack, the most practical hosted options are:
 
