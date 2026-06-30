@@ -377,3 +377,57 @@ func TestHandleClickSelfHealsKeyMissingTTL(t *testing.T) {
 		t.Fatalf("expected request to be allowed after key expired and reset, got %d", rr.Code)
 	}
 }
+func TestHandleClickSuspiciousAgentDetection(t *testing.T) {
+	cleanup := setupTestEngine(t)
+	defer cleanup()
+
+	// disable background logger writes during unit evaluation to prevent race drops
+	batchLogger = nil 
+
+	tests := []struct {
+		name           string
+		headers        map[string]string
+		expectedStatus int
+	}{
+		{
+			name: "upstream gateway sets automated tag explicit intercept",
+			headers: map[string]string{
+				"X-Click-Source": "automated",
+				"User-Agent":     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
+			},
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name: "python runner default useragent trigger signature",
+			headers: map[string]string{
+				"User-Agent": "python-requests/2.28.2",
+			},
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name: "terminal curl request client identification trigger",
+			headers: map[string]string{
+				"User-Agent": "curl/7.88.1",
+			},
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name: "absent client browser token headers classify as bot profile",
+			headers: map[string]string{
+				"User-Agent": "",
+			},
+			expectedStatus: http.StatusOK,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := `{"campaign_id":"unit_test_verification"}`
+			rr := performClickRequest(http.MethodPost, body, tt.headers)
+
+			if rr.Code != tt.expectedStatus {
+				t.Errorf("expected status response %d, but received %d instead", tt.expectedStatus, rr.Code)
+			}
+		})
+	}
+}
