@@ -21,8 +21,10 @@ import (
 )
 
 type ClickPayload struct {
-	CampaignID string `json:"campaign_id"`
+	IP         string `json:"ip"`
 	UserAgent  string `json:"user_agent"`
+	CampaignID string `json:"campaign_id"`
+	Timestamp  int64  `json:"timestamp"`
 }
 
 var (
@@ -91,6 +93,22 @@ func main() {
 	}
 }
 
+// parses and checks if the given user agent falls into known script signatures
+func isSuspiciousUserAgent(ua string) bool {
+	if ua == "" {
+		return true
+	}
+	uaLower := strings.ToLower(ua)
+	botTokens := []string{"curl", "python-requests", "go-http-client", "bot", "spider", "wget"}
+	
+	for _, token := range botTokens {
+		if strings.Contains(uaLower, token) {
+			return true
+		}
+	}
+	return false
+}
+
 func handleClick(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -114,51 +132,78 @@ func handleClick(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 
-	if ipFilter != nil && ipFilter.IsBlacklisted(ip) {
-		batchLogger.LogAsync(logger.ClickLog{
-			IP:         ip,
-			CampaignID: campaignID,
-			UserAgent:  ua,
-			IsBot:      true,
-			Reason:     "static_blacklist",
-		})
-
-		w.WriteHeader(http.StatusForbidden)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Blocked by static blacklist."})
-		return
-	}
-
-	key := fmt.Sprintf("rate:%s", ip)
-	currentRequests, err := rdb.Incr(ctx, key).Result()
-	if err == nil {
-		if currentRequests == 1 {
-			rdb.Expire(ctx, key, time.Second)
-		}
-
-		if int(currentRequests) > maxRate {
+	// 1) intercept automated bot profiles before checking Bloom filters or redis counters
+	clickSource := r.Header.Get("X-Click-Source")
+	if clickSource == "automated" || isSuspiciousUserAgent(ua) {
+		if batchLogger != nil {
 			batchLogger.LogAsync(logger.ClickLog{
 				IP:         ip,
 				CampaignID: campaignID,
 				UserAgent:  ua,
 				IsBot:      true,
-				Reason:     "rate_limit_exceeded",
+				Reason:     "suspicious_agent",
 			})
+		}
+		w.WriteHeader(http.StatusOK) // allow request parsing to terminate smoothly while flagging telemetry
+		json.NewEncoder(w).Encode(map[string]string{
+			"status":  "flagged",
+			"message": "Click accepted for validation analysis pipeline",
+		})
+		return
+	}
 
+	// 2) static blacklist filter (bloom filter)
+	if ipFilter != nil && ipFilter.IsBlacklisted(ip) {
+		if batchLogger != nil {
+			batchLogger.LogAsync(logger.ClickLog{
+				IP:         ip,
+				CampaignID: campaignID,
+				UserAgent:  ua,
+				IsBot:      true,
+				Reason:     "static_blacklist",
+			})
+		}
+		w.WriteHeader(http.StatusForbidden)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Blocked by static blacklist."})
+		return
+	}
+
+	// 3) sliding window frequency threshold evaluation 
+	key := fmt.Sprintf("rate:%s", ip)
+	currentRequests, err := rdb.Incr(ctx, key).Result()
+	if err != nil {
+		log.Printf("Redis error: %v", err)
+	} else {
+		if _, expErr := rdb.ExpireNX(ctx, key, time.Second).Result(); expErr != nil {
+			log.Printf("Redis ExpireNX error: %v", expErr)
+		}
+
+		if int(currentRequests) > maxRate {
+			if batchLogger != nil {
+				batchLogger.LogAsync(logger.ClickLog{
+					IP:         ip,
+					CampaignID: campaignID,
+					UserAgent:  ua,
+					IsBot:      true,
+					Reason:     "rate_limit_exceeded",
+				})
+			}
 			w.WriteHeader(http.StatusTooManyRequests)
 			json.NewEncoder(w).Encode(map[string]string{"error": "Too many requests. Real-time anti-fraud trigger."})
 			return
 		}
-	} else {
-		log.Printf("Redis error: %v", err)
 	}
 
-	batchLogger.LogAsync(logger.ClickLog{
-		IP:         ip,
-		CampaignID: campaignID,
-		UserAgent:  ua,
-		IsBot:      false,
-		Reason:     "allowed",
-	})
+	// 4) record safe validated interaction
+	if batchLogger != nil {
+		batchLogger.LogAsync(logger.ClickLog{
+			IP:         ip,
+			CampaignID: campaignID,
+			UserAgent:  ua,
+			IsBot:      false,
+			Reason:     "allowed",
+		})
+	}
 
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{
