@@ -93,6 +93,22 @@ func main() {
 	}
 }
 
+// parses and checks if the given user agent falls into known script signatures
+func isSuspiciousUserAgent(ua string) bool {
+	if ua == "" {
+		return true
+	}
+	uaLower := strings.ToLower(ua)
+	botTokens := []string{"curl", "python-requests", "go-http-client", "bot", "spider", "wget"}
+	
+	for _, token := range botTokens {
+		if strings.Contains(uaLower, token) {
+			return true
+		}
+	}
+	return false
+}
+
 func handleClick(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -116,6 +132,27 @@ func handleClick(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 
+	// 1) intercept automated bot profiles before checking Bloom filters or redis counters
+	clickSource := r.Header.Get("X-Click-Source")
+	if clickSource == "automated" || isSuspiciousUserAgent(ua) {
+		if batchLogger != nil {
+			batchLogger.LogAsync(logger.ClickLog{
+				IP:         ip,
+				CampaignID: campaignID,
+				UserAgent:  ua,
+				IsBot:      true,
+				Reason:     "suspicious_agent",
+			})
+		}
+		w.WriteHeader(http.StatusOK) // allow request parsing to terminate smoothly while flagging telemetry
+		json.NewEncoder(w).Encode(map[string]string{
+			"status":  "flagged",
+			"message": "Click accepted for validation analysis pipeline",
+		})
+		return
+	}
+
+	// 2) static blacklist filter (bloom filter)
 	if ipFilter != nil && ipFilter.IsBlacklisted(ip) {
 		if batchLogger != nil {
 			batchLogger.LogAsync(logger.ClickLog{
@@ -131,18 +168,12 @@ func handleClick(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 3) sliding window frequency threshold evaluation 
 	key := fmt.Sprintf("rate:%s", ip)
 	currentRequests, err := rdb.Incr(ctx, key).Result()
 	if err != nil {
 		log.Printf("Redis error: %v", err)
 	} else {
-		// ExpireNX only sets a TTL if the key doesn't already have one.
-		// Calling this on every request (not just when currentRequests
-		// == 1) means a single dropped/failed Expire call can never
-		// permanently strand a key without a TTL — every subsequent
-		// request gets a chance to set it instead. Without this, a key
-		// that loses its TTL once will INCR forever and the IP gets
-		// rate-limited permanently, even after the attack stops.
 		if _, expErr := rdb.ExpireNX(ctx, key, time.Second).Result(); expErr != nil {
 			log.Printf("Redis ExpireNX error: %v", expErr)
 		}
@@ -163,6 +194,7 @@ func handleClick(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// 4) record safe validated interaction
 	if batchLogger != nil {
 		batchLogger.LogAsync(logger.ClickLog{
 			IP:         ip,
@@ -179,6 +211,7 @@ func handleClick(w http.ResponseWriter, r *http.Request) {
 		"message": "Click registered, routing to verification queue",
 	})
 }
+
 func getEnv(key, fallback string) string {
 	if value, exists := os.LookupEnv(key); exists {
 		return value

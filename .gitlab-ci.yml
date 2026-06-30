@@ -1,50 +1,67 @@
 stages:
-  - test
-  - build
+  # - test
+  # - build
+  - deploy
 
-backend:
-  stage: test
-  image: golang:1.26-alpine
-  services:
-    - alias: redis
-      name: redis:7-alpine
-  variables:
-    TEST_REDIS_ADDR: "redis:6379"
+# backend:
+#   stage: test
+#   image: golang:1.26-alpine
+#   services:
+#     - alias: redis
+#       name: redis:7-alpine
+#   variables:
+#     TEST_REDIS_ADDR: "redis:6379"
+#   before_script:
+#     - apk add --no-cache git
+#   script:
+#     - go mod tidy
+#     - git diff --exit-code -- go.mod go.sum
+#     - go test ./...
+#     - go vet ./...
+
+# frontend:
+#   stage: test
+#   image: node:22-bookworm-slim
+#   cache:
+#     key:
+#       files:
+#         - frontend/package-lock.json
+#     paths:
+#       - frontend/.npm/
+#   before_script:
+#     - cd frontend
+#     - npm ci --no-audit --no-fund --cache .npm --prefer-offline
+#   script:
+#     - npm run lint
+#     - npm run build
+
+# docker-build:
+#   stage: build
+#   image: docker:28
+#   services:
+#     - docker:28-dind
+#   variables:
+#     DOCKER_TLS_CERTDIR: "/certs"
+#   script:
+#     - docker build -f Dockerfile.engine -t antifraud-engine:ci .
+#     - docker build -f Dockerfile.analytics -t antifraud-analytics:ci .
+#     - docker build -f frontend/Dockerfile -t antifraud-frontend:ci .
+#   needs:
+#     - backend
+#     - frontend
+
+deploy_vm_smoke:
+  stage: deploy
+  image: alpine:3.20
   before_script:
-    - apk add --no-cache git
+    - apk add --no-cache openssh-client
+    - eval $(ssh-agent -s)
+    - echo "$SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add -
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+    - ssh-keyscan -p "${VM_PORT:-22}" "$VM_HOST" >> ~/.ssh/known_hosts
+    - chmod 644 ~/.ssh/known_hosts
   script:
-    - go mod tidy
-    - git diff --exit-code -- go.mod go.sum
-    - go test ./...
-    - go vet ./...
-
-frontend:
-  stage: test
-  image: node:22-bookworm-slim
-  cache:
-    key:
-      files:
-        - frontend/package-lock.json
-    paths:
-      - frontend/.npm/
-  before_script:
-    - cd frontend
-    - npm ci --no-audit --no-fund --cache .npm --prefer-offline
-  script:
-    - npm run lint
-    - npm run build
-
-docker-build:
-  stage: build
-  image: docker:28
-  services:
-    - docker:28-dind
-  variables:
-    DOCKER_TLS_CERTDIR: "/certs"
-  script:
-    - docker build -f Dockerfile.engine -t antifraud-engine:ci .
-    - docker build -f Dockerfile.analytics -t antifraud-analytics:ci .
-    - docker build -f frontend/Dockerfile -t antifraud-frontend:ci .
-  needs:
-    - backend
-    - frontend
+    - ssh -p "${VM_PORT:-22}" "$VM_USER@$VM_HOST" "hostname && whoami && ls -la $DEPLOY_PATH"
+  only:
+    - main

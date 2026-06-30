@@ -27,4 +27,11 @@ CREATE INDEX IF NOT EXISTS idx_click_logs_processed_at
 CREATE INDEX IF NOT EXISTS idx_click_logs_campaign_processed_at
     ON click_logs (campaign_id, processed_at DESC);
 
+
+CREATE TABLE IF NOT EXISTS audit_events (
+    id SERIAL PRIMARY KEY,
+    action_text TEXT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 COMMIT;

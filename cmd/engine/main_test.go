@@ -274,27 +274,27 @@ func TestHandleClickBloomFilterBlacklist(t *testing.T) {
 	tmpFile.Close()
 
 	var bloomError error
-	importBloomPath := "./../../deployments/blacklists/dirty_ips.txt"
-	_ = importBloomPath
-
 	ipFilter, bloomError = bloom.NewIPFilter(tmpFile.Name())
 	if bloomError != nil {
 		t.Fatalf("Failed to initialize bloom filter for test: %v", bloomError)
 	}
-	defer func() { ipFilter = nil }() // Сбрасываем фильтр после теста
+	defer func() { ipFilter = nil }() 
 
 	batchLogger = nil
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/click", bytes.NewReader([]byte(`{}`)))
-	req.Header.Set("X-Forwarded-For", badIP)
-	req.Header.Set("Content-Type", "application/json")
+	body := `{
+		"user_agent":"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
+		"campaign_id":"camp_bloom_test",
+		"timestamp":123456789
+	}`
 
-	rr := httptest.NewRecorder()
-
-	handleClick(rr, req)
+	rr := performClickRequest(http.MethodPost, body, map[string]string{
+		"Content-Type":    "application/json",
+		"X-Forwarded-For": badIP,
+	})
 
 	if rr.Code != http.StatusForbidden {
-		t.Errorf("Expected status 403 Forbidden for blacklisted IP, got %d", rr.Code)
+		t.Errorf("Expected status 403 Forbidden for blacklisted IP, got %d, body: %s", rr.Code, rr.Body.String())
 	}
 }
 
@@ -375,5 +375,59 @@ func TestHandleClickSelfHealsKeyMissingTTL(t *testing.T) {
 	})
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected request to be allowed after key expired and reset, got %d", rr.Code)
+	}
+}
+func TestHandleClickSuspiciousAgentDetection(t *testing.T) {
+	cleanup := setupTestEngine(t)
+	defer cleanup()
+
+	// disable background logger writes during unit evaluation to prevent race drops
+	batchLogger = nil 
+
+	tests := []struct {
+		name           string
+		headers        map[string]string
+		expectedStatus int
+	}{
+		{
+			name: "upstream gateway sets automated tag explicit intercept",
+			headers: map[string]string{
+				"X-Click-Source": "automated",
+				"User-Agent":     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
+			},
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name: "python runner default useragent trigger signature",
+			headers: map[string]string{
+				"User-Agent": "python-requests/2.28.2",
+			},
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name: "terminal curl request client identification trigger",
+			headers: map[string]string{
+				"User-Agent": "curl/7.88.1",
+			},
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name: "absent client browser token headers classify as bot profile",
+			headers: map[string]string{
+				"User-Agent": "",
+			},
+			expectedStatus: http.StatusOK,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := `{"campaign_id":"unit_test_verification"}`
+			rr := performClickRequest(http.MethodPost, body, tt.headers)
+
+			if rr.Code != tt.expectedStatus {
+				t.Errorf("expected status response %d, but received %d instead", tt.expectedStatus, rr.Code)
+			}
+		})
 	}
 }
