@@ -82,9 +82,20 @@ cd anti-fraud-platform
 docker compose up --build -d
 ```
 
+<<<<<<< HEAD
+If SSH access to GitHub is not configured on the machine, use HTTPS instead:
+
+```bash
+git clone https://github.com/anti-fraud-platform/anti-fraud-platform.git
+cd anti-fraud-platform
+```
+
+Start the full local stack:
+=======
 This builds and starts six containers: `engine`, `nginx_engine`, `analytics`, `frontend`, `postgres`, `redis`. The first build takes 1-3 minutes depending on your machine; subsequent runs are faster since Docker caches layers.
 
 ### 2. Confirm everything is healthy
+>>>>>>> main
 
 ```bash
 docker compose ps
