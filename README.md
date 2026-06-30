@@ -82,9 +82,17 @@ cd anti-fraud-platform
 docker compose up --build -d
 ```
 
+If SSH access to GitHub is not configured on the machine, use HTTPS instead:
+
+```bash
+git clone https://github.com/anti-fraud-platform/anti-fraud-platform.git
+cd anti-fraud-platform
+```
+
 This builds and starts six containers: `engine`, `nginx_engine`, `analytics`, `frontend`, `postgres`, `redis`. The first build takes 1-3 minutes depending on your machine; subsequent runs are faster since Docker caches layers.
 
 ### 2. Confirm everything is healthy
+Check the containers:
 
 ```bash
 docker compose ps
@@ -201,6 +209,29 @@ docker compose down -v     # stop containers, wipe Postgres volume too
 ```
 
 Full setup guide with additional troubleshooting: [docs/SETUP.md](docs/SETUP.md)
+
+## University VM Deployment
+
+The current hosted environment runs on the university VM `afplatform` with Ubuntu 22.04.
+The stack is deployed with Docker Compose and is reachable from the Innopolis University internal network or through the university VPN.
+
+Current endpoints on the VM:
+
+| What | URL |
+|---|---|
+| Dashboard | `http://10.93.26.161:3001` |
+| Analytics API | `http://10.93.26.161:8082/v1/analytics/stats` |
+| Engine simulator | `http://10.93.26.161:9090` |
+
+The engine itself is not exposed directly. The VM publishes the simulator page on port `9090`, which proxies requests to the internal `engine` service.
+
+To verify the deployed VM stack from inside the university network:
+
+```bash
+curl http://10.93.26.161:8082/v1/analytics/stats
+curl -X POST http://10.93.26.161:9090/click -H "Content-Type: application/json" -d '{}'
+curl -X POST http://10.93.26.161:9090/bot/click -H "Content-Type: application/json" -d '{}'
+```
 
 ## Sending a click
 
