@@ -18,7 +18,6 @@ function Dashboard() {
     ? [
         { label: 'Total clicks', value: formatNumber(data.total_clicks), danger: false },
         { label: 'Blocked bots', value: formatNumber(data.blocked_bots), danger: true },
-        { label: 'Money saved', value: formatMoney(data.saved_money_usd), danger: false },
         { label: 'Budget saved', value: formatMoney(data.budget_saved), danger: false },
       ]
     : [];
@@ -30,8 +29,7 @@ function Dashboard() {
     <Layout title="Dashboard">
       {loading && !data && (
         <>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
-            <SkeletonCard />
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-4">
             <SkeletonCard />
             <SkeletonCard />
             <SkeletonCard />
@@ -57,7 +55,7 @@ function Dashboard() {
             </p>
           )}
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-4">
             {statItems.map((item, idx) => (
               <StatCard key={idx} label={item.label} value={item.value} danger={item.danger} />
             ))}
