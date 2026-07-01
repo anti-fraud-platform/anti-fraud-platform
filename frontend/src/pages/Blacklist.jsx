@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import Layout from '../components/Layout';
 import SkeletonBlacklistRow from '../components/SkeletonBlacklistRow';
+const intervalMs = 5000;
 
 function Blacklist() {
   const [loading, setLoading] = useState(true);
@@ -8,23 +9,40 @@ function Blacklist() {
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    fetchBlacklist();
-  }, []);
+    let cancelled = false;
+    let timer = null;
 
-  const fetchBlacklist = async () => {
-    try {
+    async function fetchBlacklist() {
+      if (cancelled) return;
       setLoading(true);
-      const response = await fetch('/api/v1/analytics/blacklist/ips'); 
-      if (!response.ok) throw new Error('Failed to fetch');
-      const data = await response.json();
-      setBlacklistData(data.items || []);
-    } catch (err) {
-      console.error('Error fetching blacklist:', err);
-      setError('Failed to load blacklist data');
-    } finally {
-      setLoading(false);
+
+      try {
+        const response = await fetch('/api/v1/analytics/blacklist/ips');
+        if (!response.ok) throw new Error('Failed to fetch');
+        const data = await response.json();
+        if (cancelled) return;
+        setBlacklistData(data.items || []);
+        setError(null);
+      } catch (err) {
+        if (cancelled) return;
+        console.error('Error fetching blacklist:', err);
+        setError('Failed to load blacklist data');
+
+        timer = setTimeout(fetchBlacklist, intervalMs);
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
     }
-  };
+
+    fetchBlacklist();
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, []);
 
   const exportToCSV = () => {
     if (blacklistData.length === 0) {
