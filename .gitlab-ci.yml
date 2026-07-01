@@ -68,8 +68,8 @@ deploy_vm:
       git fetch origin &&
       git checkout main &&
       git pull --ff-only origin main &&
-      docker-compose up --build -d &&
-      docker-compose ps"
+      docker compose up --build -d &&
+      docker compose ps"
   needs:
     - backend
     - frontend
