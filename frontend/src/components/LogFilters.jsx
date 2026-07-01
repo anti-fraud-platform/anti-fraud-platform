@@ -41,6 +41,11 @@ function LogFilters({
         >
           <option value="">All reasons</option>
           <option value="allowed">Allowed</option>
+          <option value="suspicious_agent">Suspicious UA</option>
+          <option value="no_js_challenge">No JS challenge</option>
+          <option value="challenge_too_fast">Challenge too fast</option>
+          <option value="challenge_mismatch">Challenge mismatch</option>
+          <option value="suspicious_headers">Suspicious headers</option>
           <option value="static_blacklist">Blacklist</option>
           <option value="rate_limit_exceeded">Rate limit exceeded</option>
         </select>

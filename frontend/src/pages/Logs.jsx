@@ -20,12 +20,44 @@ function formatReason(rawReason) {
   switch (rawReason) {
     case 'allowed':
       return 'Allowed';
+    case 'suspicious_agent':
+      return 'Suspicious UA';
+    case 'no_js_challenge':
+      return 'No JS challenge';
+    case 'challenge_too_fast':
+      return 'Challenge too fast';
+    case 'challenge_mismatch':
+      return 'Challenge mismatch';
+    case 'suspicious_headers':
+      return 'Suspicious headers';
     case 'static_blacklist':
       return 'Blacklist';
     case 'rate_limit_exceeded':
       return 'Rate limit exceeded';
     default:
       return rawReason || '—';
+  }
+}
+
+// Row background by reason, grouped by which detection layer caught it.
+// Falls back to a generic red for anything not explicitly listed here, so
+// a future new reason still renders (just without its own color) instead
+// of breaking.
+function rowClassForEntry(entry) {
+  if (!entry.is_bot) return '';
+  switch (entry.reason) {
+    case 'static_blacklist':
+      return 'bg-red-200';
+    case 'rate_limit_exceeded':
+      return 'bg-orange-100';
+    case 'no_js_challenge':
+    case 'challenge_too_fast':
+    case 'challenge_mismatch':
+      return 'bg-purple-100';
+    case 'suspicious_headers':
+      return 'bg-yellow-100';
+    default:
+      return 'bg-red-100';
   }
 }
 
@@ -149,18 +181,7 @@ function Logs() {
                   </tr>
                 ) : (
                   logEntries.map((entry) => (
-                    <tr
-                      key={entry.id}
-                      className={`border-t border-border ${
-                        entry.is_bot
-                          ? entry.reason === 'static_blacklist'
-                            ? 'bg-red-200'
-                            : entry.reason === 'rate_limit_exceeded'
-                            ? 'bg-orange-100'
-                            : 'bg-red-100'
-                          : ''
-                      }`}
-                    >
+                    <tr key={entry.id} className={`border-t border-border ${rowClassForEntry(entry)}`}>
                       <td className="px-3.5 py-2.5 font-mono">{entry.ip}</td>
                       <td className="px-3.5 py-2.5 font-mono">{entry.campaign_id}</td>
                       <td className="px-3.5 py-2.5 text-text-muted truncate max-w-[200px]">

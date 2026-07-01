@@ -2,6 +2,9 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -10,6 +13,7 @@ import (
 	"time"
 
 	"anti-fraud/internal/bloom"
+	"anti-fraud/internal/challenge"
 	"anti-fraud/internal/logger"
 
 	"github.com/alicebob/miniredis/v2"
@@ -24,12 +28,28 @@ func setupTestEngine(t *testing.T) func() {
 	rdb = redis.NewClient(&redis.Options{
 		Addr: mr.Addr(),
 	})
+	challengeStore = &challenge.RedisStore{Client: rdb}
 
 	ipFilter = nil
 	batchLogger = logger.NewBatchLogger(nil, 100, 1000)
 	maxRate = 5
 
+	// Tier 1 checks default to disabled here. Most tests in this file are
+	// focused unit tests of the pre-existing pipeline steps (UA check,
+	// bloom filter, rate limiter, IP-spoof handling) and intentionally
+	// POST without challenge_id/challenge_token or browser-shaped headers
+	// — that's the point of those tests, not something to work around.
+	// Tests that want to exercise the new layers explicitly re-enable the
+	// relevant toggle after calling this; see TestHandleClickRequiresJSChallenge
+	// and the header-heuristic tests below.
+	origChallenge := requireChallenge
+	origHeaderCheck := requireHeaderCheck
+	requireChallenge = false
+	requireHeaderCheck = false
+
 	return func() {
+		requireChallenge = origChallenge
+		requireHeaderCheck = origHeaderCheck
 		_ = rdb.Close()
 		mr.Close()
 	}
@@ -45,6 +65,18 @@ func performClickRequest(method string, body string, headers map[string]string) 
 	rr := httptest.NewRecorder()
 	handleClick(rr, req)
 	return rr
+}
+
+// decodeClickStatus pulls the "status" field ("success" | "flagged") out of
+// a click response body. Several tests below need to distinguish these two
+// cases specifically, since both return HTTP 200.
+func decodeClickStatus(t *testing.T, rr *httptest.ResponseRecorder) string {
+	t.Helper()
+	var resp map[string]string
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode click response body %q: %v", rr.Body.String(), err)
+	}
+	return resp["status"]
 }
 
 func TestHandleClickTableDriven(t *testing.T) {
@@ -261,6 +293,18 @@ func TestClickIntegrationPipeline(t *testing.T) {
 }
 
 func TestHandleClickBloomFilterBlacklist(t *testing.T) {
+	// Doesn't call setupTestEngine (no Redis needed to reach the bloom
+	// filter step), so the Tier 1 toggles are disabled/restored here
+	// directly instead.
+	origChallenge := requireChallenge
+	origHeaderCheck := requireHeaderCheck
+	requireChallenge = false
+	requireHeaderCheck = false
+	defer func() {
+		requireChallenge = origChallenge
+		requireHeaderCheck = origHeaderCheck
+	}()
+
 	tmpFile, err := os.CreateTemp("", "test_dirty_ips_*.txt")
 	if err != nil {
 		t.Fatalf("Failed to create temp file: %v", err)
@@ -278,7 +322,7 @@ func TestHandleClickBloomFilterBlacklist(t *testing.T) {
 	if bloomError != nil {
 		t.Fatalf("Failed to initialize bloom filter for test: %v", bloomError)
 	}
-	defer func() { ipFilter = nil }() 
+	defer func() { ipFilter = nil }()
 
 	batchLogger = nil
 
@@ -339,6 +383,18 @@ func TestHandleClickSelfHealsKeyMissingTTL(t *testing.T) {
 	batchLogger = logger.NewBatchLogger(nil, 100, 1000)
 	maxRate = 5
 
+	// Doesn't call setupTestEngine, so disable/restore the Tier 1 toggles
+	// directly — this test targets the rate-limiter TTL self-heal, not
+	// the new checks.
+	origChallenge := requireChallenge
+	origHeaderCheck := requireHeaderCheck
+	requireChallenge = false
+	requireHeaderCheck = false
+	defer func() {
+		requireChallenge = origChallenge
+		requireHeaderCheck = origHeaderCheck
+	}()
+
 	ip := "5.5.5.5"
 	key := "rate:" + ip
 
@@ -382,7 +438,7 @@ func TestHandleClickSuspiciousAgentDetection(t *testing.T) {
 	defer cleanup()
 
 	// disable background logger writes during unit evaluation to prevent race drops
-	batchLogger = nil 
+	batchLogger = nil
 
 	tests := []struct {
 		name           string
@@ -429,5 +485,253 @@ func TestHandleClickSuspiciousAgentDetection(t *testing.T) {
 				t.Errorf("expected status response %d, but received %d instead", tt.expectedStatus, rr.Code)
 			}
 		})
+	}
+}
+
+// ============================================================================
+// Tier 1: JS-execution challenge — tests below actually exercise the new
+// check (requireChallenge = true), unlike every test above which
+// deliberately runs with it disabled.
+// ============================================================================
+
+func TestHandleClickRequiresJSChallenge(t *testing.T) {
+	cleanup := setupTestEngine(t)
+	defer cleanup()
+	requireChallenge = true
+	requireHeaderCheck = false
+
+	body := `{"campaign_id":"camp_challenge_missing"}`
+	rr := performClickRequest(http.MethodPost, body, map[string]string{
+		"Content-Type":    "application/json",
+		"X-Forwarded-For": "50.50.50.1",
+	})
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected HTTP 200 (flagged, not hard-blocked) for a click with no challenge fields, got %d", rr.Code)
+	}
+	if status := decodeClickStatus(t, rr); status != "flagged" {
+		t.Fatalf("expected status=flagged for a click with no challenge_id/challenge_token, got %q", status)
+	}
+}
+
+func TestHandleClickChallengeSolvedTooFastIsFlagged(t *testing.T) {
+	cleanup := setupTestEngine(t)
+	defer cleanup()
+	requireChallenge = true
+	requireHeaderCheck = false
+
+	ch, err := challenge.Issue(context.Background(), challengeStore)
+	if err != nil {
+		t.Fatalf("failed to issue challenge: %v", err)
+	}
+	token := challenge.ComputeToken(ch.Nonce)
+
+	// No sleep — simulates a script that calls /v1/challenge and /v1/click
+	// back-to-back, faster than MinSolveDelay allows a human to.
+	body := fmt.Sprintf(`{"campaign_id":"camp_too_fast","challenge_id":%q,"challenge_token":%q}`, ch.ChallengeID, token)
+	rr := performClickRequest(http.MethodPost, body, map[string]string{
+		"Content-Type":    "application/json",
+		"X-Forwarded-For": "50.50.50.2",
+	})
+
+	if status := decodeClickStatus(t, rr); status != "flagged" {
+		t.Fatalf("expected a challenge solved faster than MinSolveDelay to be flagged, got status=%q (http %d)", status, rr.Code)
+	}
+}
+
+func TestHandleClickChallengeSolvedCorrectlyIsAllowed(t *testing.T) {
+	cleanup := setupTestEngine(t)
+	defer cleanup()
+	requireChallenge = true
+	requireHeaderCheck = false // isolate: only testing the challenge layer here
+
+	ch, err := challenge.Issue(context.Background(), challengeStore)
+	if err != nil {
+		t.Fatalf("failed to issue challenge: %v", err)
+	}
+	time.Sleep(challenge.MinSolveDelay + 20*time.Millisecond)
+	token := challenge.ComputeToken(ch.Nonce)
+
+	body := fmt.Sprintf(`{"campaign_id":"camp_valid_challenge","challenge_id":%q,"challenge_token":%q}`, ch.ChallengeID, token)
+	rr := performClickRequest(http.MethodPost, body, map[string]string{
+		"Content-Type":    "application/json",
+		"X-Forwarded-For": "50.50.50.3",
+		// Must set a normal UA — an empty User-Agent trips
+		// isSuspiciousUserAgent at step 1, before the challenge check
+		// (step 2) ever runs, which would flag this for the wrong reason.
+"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+	})
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 for a correctly solved challenge, got %d, body=%s", rr.Code, rr.Body.String())
+	}
+	if status := decodeClickStatus(t, rr); status != "success" {
+		t.Fatalf("expected status=success for a correctly solved challenge, got %q", status)
+	}
+}
+
+func TestHandleClickChallengeWrongTokenIsFlagged(t *testing.T) {
+	cleanup := setupTestEngine(t)
+	defer cleanup()
+	requireChallenge = true
+	requireHeaderCheck = false
+
+	ch, err := challenge.Issue(context.Background(), challengeStore)
+	if err != nil {
+		t.Fatalf("failed to issue challenge: %v", err)
+	}
+	time.Sleep(challenge.MinSolveDelay + 20*time.Millisecond)
+
+	body := fmt.Sprintf(`{"campaign_id":"camp_wrong_token","challenge_id":%q,"challenge_token":"not-the-real-token"}`, ch.ChallengeID)
+	rr := performClickRequest(http.MethodPost, body, map[string]string{
+		"Content-Type":    "application/json",
+		"X-Forwarded-For": "50.50.50.4",
+	})
+
+	if status := decodeClickStatus(t, rr); status != "flagged" {
+		t.Fatalf("expected an incorrect token to be flagged, got status=%q", status)
+	}
+}
+
+func TestHandleClickChallengeReplayIsRejected(t *testing.T) {
+	cleanup := setupTestEngine(t)
+	defer cleanup()
+	requireChallenge = true
+	requireHeaderCheck = false
+
+	ch, err := challenge.Issue(context.Background(), challengeStore)
+	if err != nil {
+		t.Fatalf("failed to issue challenge: %v", err)
+	}
+	time.Sleep(challenge.MinSolveDelay + 20*time.Millisecond)
+	token := challenge.ComputeToken(ch.Nonce)
+
+	body := fmt.Sprintf(`{"campaign_id":"camp_replay","challenge_id":%q,"challenge_token":%q}`, ch.ChallengeID, token)
+	headers := map[string]string{
+		"Content-Type":    "application/json",
+		"X-Forwarded-For": "50.50.50.5",
+		// See comment in TestHandleClickChallengeSolvedCorrectlyIsAllowed —
+		// empty UA would flag this at step 1 for the wrong reason.
+"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+
+}
+
+	first := performClickRequest(http.MethodPost, body, headers)
+	if status := decodeClickStatus(t, first); status != "success" {
+		t.Fatalf("expected first use of a valid challenge to succeed, got %q", status)
+	}
+
+	second := performClickRequest(http.MethodPost, body, headers)
+	if status := decodeClickStatus(t, second); status != "flagged" {
+		t.Fatalf("expected a replayed challenge_id/challenge_token to be rejected on second use, got %q", status)
+	}
+}
+
+// ============================================================================
+// Tier 1: header-consistency heuristic
+// ============================================================================
+
+func TestHandleClickHeaderHeuristicFlagsBareRequest(t *testing.T) {
+	cleanup := setupTestEngine(t)
+	defer cleanup()
+	requireChallenge = false // isolate: only testing the header layer here
+	requireHeaderCheck = true
+
+	body := `{"campaign_id":"camp_header_bare"}`
+	rr := performClickRequest(http.MethodPost, body, map[string]string{
+		"Content-Type":    "application/json",
+		"X-Forwarded-For": "60.60.60.1",
+		// A Chrome UA with none of the headers real Chrome actually sends
+		// alongside it — passes the step-1 UA sniff, should still be
+		// caught here.
+		"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+	})
+
+	if status := decodeClickStatus(t, rr); status != "flagged" {
+		t.Fatalf("expected a request with only Content-Type/User-Agent (no Accept-Language/Sec-Fetch-*/Client Hints) to be flagged by the header heuristic, got %q", status)
+	}
+}
+
+// This is the integration-level regression test for the Accept:"*/*" bug
+// caught during Tier 1 integration: a same-origin fetch() call from the
+// real clicker page sends "Accept: */*" by browser default, plus the full
+// set of Sec-Fetch-*/Accept-Language/Accept-Encoding/Client Hints headers.
+// That combination must pass — an earlier version of headercheck would
+// have flagged this specifically because of the wildcard Accept value.
+func TestHandleClickHeaderHeuristicAllowsBrowserLikeRequest(t *testing.T) {
+	cleanup := setupTestEngine(t)
+	defer cleanup()
+	requireChallenge = false
+	requireHeaderCheck = true
+
+	body := `{"campaign_id":"camp_header_browser"}`
+	rr := performClickRequest(http.MethodPost, body, map[string]string{
+		"Content-Type":    "application/json",
+		"X-Forwarded-For": "60.60.60.2",
+		"User-Agent":      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+		"Accept":          "*/*",
+		"Accept-Language": "en-US,en;q=0.9",
+		"Accept-Encoding": "gzip, deflate, br",
+		"Sec-Fetch-Site":  "same-origin",
+		"Sec-Fetch-Mode":  "cors",
+		"Sec-Ch-Ua":       `"Chromium";v="125", "Google Chrome";v="125"`,
+	})
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	if status := decodeClickStatus(t, rr); status != "success" {
+		t.Fatalf("expected a fully browser-shaped request (including Accept: */*) to pass the header heuristic, got %q", status)
+	}
+}
+
+// ============================================================================
+// Tier 1: GET /v1/challenge
+// ============================================================================
+
+func TestHandleChallengeIssuesUniqueChallenges(t *testing.T) {
+	cleanup := setupTestEngine(t)
+	defer cleanup()
+
+	req1 := httptest.NewRequest(http.MethodGet, "/v1/challenge", nil)
+	rr1 := httptest.NewRecorder()
+	handleChallenge(rr1, req1)
+
+	if rr1.Code != http.StatusOK {
+		t.Fatalf("expected 200 from GET /v1/challenge, got %d", rr1.Code)
+	}
+
+	var ch1 challenge.Challenge
+	if err := json.Unmarshal(rr1.Body.Bytes(), &ch1); err != nil {
+		t.Fatalf("failed to decode challenge response: %v", err)
+	}
+	if ch1.ChallengeID == "" || ch1.Nonce == "" {
+		t.Fatalf("expected non-empty challenge_id and nonce, got %+v", ch1)
+	}
+
+	req2 := httptest.NewRequest(http.MethodGet, "/v1/challenge", nil)
+	rr2 := httptest.NewRecorder()
+	handleChallenge(rr2, req2)
+
+	var ch2 challenge.Challenge
+	if err := json.Unmarshal(rr2.Body.Bytes(), &ch2); err != nil {
+		t.Fatalf("failed to decode second challenge response: %v", err)
+	}
+
+	if ch1.ChallengeID == ch2.ChallengeID || ch1.Nonce == ch2.Nonce {
+		t.Fatalf("expected two separate GET /v1/challenge calls to return distinct challenges, got identical values")
+	}
+}
+
+func TestHandleChallengeRejectsNonGET(t *testing.T) {
+	cleanup := setupTestEngine(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/challenge", nil)
+	rr := httptest.NewRecorder()
+	handleChallenge(rr, req)
+
+	if rr.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405 for POST /v1/challenge, got %d", rr.Code)
 	}
 }
