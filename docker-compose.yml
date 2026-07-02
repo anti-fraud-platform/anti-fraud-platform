@@ -22,6 +22,9 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       BLACKLIST_PATH: /app/data/dirty_ips.txt
+      REQUIRE_JS_CHALLENGE: "true"
+      REQUIRE_HEADER_CHECK: "true"
+
     expose:
       - "8080"
     volumes:
@@ -48,6 +51,7 @@ services:
     networks:
       - antifraud-net
     restart: unless-stopped
+   
 
   analytics:
     build:
