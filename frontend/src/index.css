@@ -15,8 +15,33 @@
   --color-chart-bar: #e5e7eb;
   --color-chart-dashed: #c9ccd2;
   --color-chart-text: #9a9a96;
+
+  --color-app-bg: #ffffff;
+  --color-app-fg: #1a1a1a;
+}
+
+.dark {
+  --color-primary: #8b7cf6;
+  --color-primary-light: #241f3d;
+  --color-surface: #12121a;
+  --color-border: #262633;
+  --color-text-main: #e8e8f0;
+  --color-text-muted: #8a8a9a;
+  --color-danger: #f0616d;
+  --color-danger-light: #2a1620;
+  --color-success: #34d399;
+  --color-success-light: #0f2a22;
+  --color-chart-bg: #16161f;
+  --color-chart-bar: #2a2a38;
+  --color-chart-dashed: #33333f;
+  --color-chart-text: #6a6a7a;
+
+  --color-app-bg: #0a0a0f;
+  --color-app-fg: #e8e8f0;
 }
 
 body {
   margin: 0;
+  background-color: var(--color-app-bg);
+  color: var(--color-app-fg);
 }
