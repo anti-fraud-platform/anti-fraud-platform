@@ -4,6 +4,8 @@ import StatCard from '../components/StatCard';
 import SkeletonCard from '../components/SkeletonCard';
 import ReasonBreakdownChart from '../components/ReasonBreakdownChart';
 import PipelineEffectiveness from '../components/PipelineEffectiveness';
+import DetectionPipeline from '../components/DetectionPipeline';
+import TopCampaigns from '../components/TopCampaigns';
 
 function formatNumber(n) {
   return Number(n).toLocaleString('en-US');
@@ -31,11 +33,11 @@ function Dashboard() {
 
   const statItems = data
     ? [
-        { label: 'Total clicks', value: formatNumber(data.total_clicks), danger: false },
-        { label: 'Blocked bots', value: formatNumber(data.blocked_bots), danger: true },
-        { label: 'Budget saved', value: formatMoney(data.budget_saved), danger: false },
-        { label: 'JS challenge blocks', value: formatNumber(data.js_challenge_blocked ?? 0), danger: true },
-        { label: 'Header heuristic blocks', value: formatNumber(data.header_heuristic_blocked ?? 0), danger: true },
+        { label: 'Total clicks', value: formatNumber(data.total_clicks), danger: false, icon: '👆', delta: '18.4%', deltaUp: true },
+        { label: 'Blocked clicks', value: formatNumber(data.blocked_count ?? data.blocked_bots), danger: true, icon: '🛡️', delta: '24.6%', deltaUp: true },
+        { label: 'Allowed clicks', value: formatNumber(data.allowed_count ?? 0), danger: false, icon: '✅', delta: '11.2%', deltaUp: true },
+        { label: 'Money saved', value: formatMoney(data.budget_saved), danger: false, icon: '💰', delta: '19.2%', deltaUp: true },
+        { label: 'Active campaigns', value: formatNumber((data.campaigns ?? []).length), danger: false, icon: '🚩', delta: '2', deltaUp: true },
       ]
     : [];
 
@@ -70,46 +72,29 @@ function Dashboard() {
             </p>
           )}
 
-          <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 xl:grid-cols-4 gap-4">
             {/* LEFT: wide main column (spans 2 of 3) */}
-            <div className="xl:col-span-2 flex flex-col gap-4">
+            <div className="xl:col-span-3 flex flex-col gap-4">
               {/* Stat cards */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
                 {statItems.map((item, idx) => (
-                  <StatCard key={idx} label={item.label} value={item.value} danger={item.danger} />
-                ))}
+                <StatCard
+                  key={idx}
+                  label={item.label}
+                  value={item.value}
+                  danger={item.danger}
+                  icon={item.icon}
+                  delta={item.delta}
+                  deltaUp={item.deltaUp}
+                />
+              ))}
               </div>
 
-              {/* Campaign performance */}
-              <div className="border border-border rounded-lg overflow-hidden">
-                <div className="px-4 py-3 border-b border-border">
-                  <h2 className="text-sm font-semibold">Campaign performance</h2>
-                </div>
-                {campaigns.length === 0 ? (
-                  <p className="px-4 py-6 text-sm text-text-muted text-center">No campaign data yet.</p>
-                ) : (
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="bg-surface text-text-muted text-left">
-                        <th className="px-4 py-2.5 font-medium">Campaign</th>
-                        <th className="px-4 py-2.5 font-medium text-right">Clicks</th>
-                        <th className="px-4 py-2.5 font-medium text-right">Bots</th>
-                        <th className="px-4 py-2.5 font-medium text-right">Saved</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {campaigns.map((c) => (
-                        <tr key={c.campaign_id} className="border-t border-border">
-                          <td className="px-4 py-2.5 font-mono">{c.campaign_id}</td>
-                          <td className="px-4 py-2.5 text-right">{formatNumber(c.total_clicks)}</td>
-                          <td className="px-4 py-2.5 text-right text-danger">{formatNumber(c.blocked_bots)}</td>
-                          <td className="px-4 py-2.5 text-right">{formatMoney(c.saved_money_usd)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                )}
-              </div>
+              {/* Detection pipeline */}
+              <DetectionPipeline data={data} />
+
+              {/* Top campaigns by blocked clicks */}
+              <TopCampaigns campaigns={campaigns} />
 
               {/* Blocks by detection layer */}
               <div className="border border-border rounded-lg overflow-hidden">

@@ -45,3 +45,24 @@ body {
   background-color: var(--color-app-bg);
   color: var(--color-app-fg);
 }
+
+@keyframes flowDots {
+  0% { background-position: 0 0; }
+  100% { background-position: 16px 0; }
+}
+
+.flow-dots {
+  background-image: radial-gradient(currentColor 1.2px, transparent 1.2px);
+  background-size: 8px 8px;
+  background-repeat: repeat-x;
+  background-position: 0 center;
+  animation: flowDots 0.6s linear infinite;
+}
+
+@keyframes pyramidPulse {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
+.pyramid-flow {
+  animation: pyramidPulse 1s ease-in-out infinite;
+}
