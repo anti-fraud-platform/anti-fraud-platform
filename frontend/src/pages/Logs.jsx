@@ -1,214 +1,181 @@
-import { useState, useMemo } from 'react';
+import { useState } from 'react';
 import Layout from '../components/Layout';
 import { useLogs } from '../hooks/useLogs';
-import SkeletonLogsRow from '../components/SkeletonLogsRow';
-import LogFilters from '../components/LogFilters';
-import TablePagination from '../components/TablePagination';
 
-function formatDateTime(isoString) {
-  const d = new Date(isoString);
-  return d.toLocaleString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  });
-}
-
-function formatReason(rawReason) {
-  switch (rawReason) {
-    case 'allowed':
-      return 'Allowed';
-    case 'suspicious_agent':
-      return 'Suspicious UA';
-    case 'no_js_challenge':
-      return 'No JS challenge';
-    case 'challenge_too_fast':
-      return 'Challenge too fast';
-    case 'challenge_mismatch':
-      return 'Challenge mismatch';
-    case 'suspicious_headers':
-      return 'Suspicious headers';
-    case 'static_blacklist':
-      return 'Blacklist';
-    case 'rate_limit_exceeded':
-      return 'Rate limit exceeded';
-    default:
-      return rawReason || '—';
+function formatDate(iso) {
+  try {
+    return new Date(iso).toLocaleString('en-US', {
+      month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit',
+    });
+  } catch {
+    return iso;
   }
 }
 
-// Row background by reason, grouped by which detection layer caught it.
-// Falls back to a generic red for anything not explicitly listed here, so
-// a future new reason still renders (just without its own color) instead
-// of breaking.
-function rowClassForEntry(entry) {
-  if (!entry.is_bot) return '';
-  switch (entry.reason) {
-    case 'static_blacklist':
-      return 'bg-red-200';
-    case 'rate_limit_exceeded':
-      return 'bg-orange-100';
-    case 'no_js_challenge':
-    case 'challenge_too_fast':
-    case 'challenge_mismatch':
-      return 'bg-purple-100';
-    case 'suspicious_headers':
-      return 'bg-yellow-100';
-    default:
-      return 'bg-red-100';
-  }
+function formatReason(reason, isBot) {
+  if (!isBot) return 'Allowed';
+  const map = {
+    suspicious_agent: 'Suspicious UA',
+    no_js_challenge: 'No JS challenge',
+    challenge_too_fast: 'Challenge too fast',
+    challenge_mismatch: 'Challenge mismatch',
+    suspicious_headers: 'Suspicious headers',
+    static_blacklist: 'Static blacklist',
+    rate_limit_exceeded: 'Rate limit exceeded',
+  };
+  return map[reason] || reason || '—';
 }
 
-const logsTableHeader = (
-  <thead>
-    <tr className="bg-surface text-left text-text-muted">
-      <th className="px-3.5 py-2.5 font-medium">IP</th>
-      <th className="px-3.5 py-2.5 font-medium">Campaign</th>
-      <th className="px-3.5 py-2.5 font-medium">User-Agent</th>
-      <th className="px-3.5 py-2.5 font-medium">Reason</th>
-      <th className="px-3.5 py-2.5 font-medium">Date/Time</th>
-    </tr>
-  </thead>
-);
+// Row tint by type — semi-transparent so it works in light AND dark themes.
+function rowTint(isBot, reason) {
+  if (!isBot) return 'transparent';
+  if (reason === 'suspicious_agent') return 'rgba(240, 97, 109, 0.08)';   // red-ish
+  if (reason === 'static_blacklist') return 'rgba(240, 97, 109, 0.12)';
+  return 'rgba(139, 124, 246, 0.08)'; // purple-ish for other bot reasons
+}
 
 function Logs() {
-  // Pagination state.
   const [page, setPage] = useState(1);
-  const [limit, setLimit] = useState(20);
+  const [campaign, setCampaign] = useState('');
+  const [type, setType] = useState('');
+  const [reason, setReason] = useState('');
+  const [jumpValue, setJumpValue] = useState('');
 
-  // Filter state.
-  const [campaignId, setCampaignId] = useState('');
-  const [isBotFilter, setIsBotFilter] = useState(''); // '', 'true', 'false'
-  const [reasonFilter, setReasonFilter] = useState('');
+  const params = { page, limit: 20 };
+  if (campaign) params.campaign_id = campaign;
+  if (type === 'bots') params.is_bot = true;
+  if (type === 'clean') params.is_bot = false;
+  if (reason) params.reason = reason;
 
-  // Preparing params.
-  const params = useMemo(() => {
-    const p = { page, limit };
-    if (campaignId.trim() !== '') p.campaign_id = campaignId.trim();
-    if (isBotFilter !== '') p.is_bot = isBotFilter === 'true';
-    if (reasonFilter.trim() !== '') p.reason = reasonFilter.trim();
-    return p;
-  }, [page, limit, campaignId, isBotFilter, reasonFilter]);
+  const { data, loading, error } = useLogs(params, 2500);
 
-  const { data, loading, error } = useLogs(params);
-
-  const logEntries = data?.data ?? [];
+  const logs = data?.data ?? [];
   const totalPages = data?.total_pages ?? 1;
-
-  const handleCampaignChange = (newValue) => {
-    setCampaignId(newValue);
-    setPage(1);
-  };
-
-  const handleReasonChange = (newReason) => {
-    setReasonFilter(newReason);
-    setPage(1);
-    if (newReason === 'allowed') {
-      setIsBotFilter('false');
-    } else if (newReason !== '') {
-      setIsBotFilter('true');
-    }
-  };
-
-  const handleTypeChange = (newType) => {
-    setIsBotFilter(newType);
-    setPage(1);
-    if (newType === 'true' && reasonFilter === 'allowed') {
-      setReasonFilter('');
-    } else if (newType === 'false' && reasonFilter !== '' && reasonFilter !== 'allowed') {
-      setReasonFilter('');
-    }
-  };
-
-  const handlePageChange = (newPage) => {
-    setPage(newPage);
-  };
-
-  const handleLimitChange = (newLimit) => {
-    setLimit(newLimit);
-    setPage(1);
-  };
 
   return (
     <Layout title="Logs">
-      <LogFilters
-        campaignId={campaignId}
-        isBotFilter={isBotFilter}
-        reasonFilter={reasonFilter}
-        onCampaignChange={handleCampaignChange}
-        onTypeChange={handleTypeChange}
-        onReasonChange={handleReasonChange}
-      />
+      {/* Filters */}
+      <div className="flex flex-wrap gap-4 mb-4">
+        <div className="flex flex-col gap-1">
+          <label className="text-xs text-text-muted">Campaign</label>
+          <input
+            type="text"
+            value={campaign}
+            onChange={(e) => { setCampaign(e.target.value); setPage(1); }}
+            placeholder="All campaigns"
+            className="px-3 py-2 rounded-lg border border-border bg-app-bg text-text-main text-sm w-48"
+          />
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-xs text-text-muted">Type</label>
+          <select
+            value={type}
+            onChange={(e) => { setType(e.target.value); setPage(1); }}
+            className="px-3 py-2 rounded-lg border border-border bg-app-bg text-text-main text-sm"
+          >
+            <option value="">All traffic</option>
+            <option value="bots">Bots only</option>
+            <option value="clean">Clean only</option>
+          </select>
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-xs text-text-muted">Reason</label>
+          <select
+            value={reason}
+            onChange={(e) => { setReason(e.target.value); setPage(1); }}
+            className="px-3 py-2 rounded-lg border border-border bg-app-bg text-text-main text-sm"
+          >
+            <option value="">All reasons</option>
+            <option value="suspicious_agent">Suspicious UA</option>
+            <option value="no_js_challenge">No JS challenge</option>
+            <option value="challenge_too_fast">Challenge too fast</option>
+            <option value="challenge_mismatch">Challenge mismatch</option>
+            <option value="suspicious_headers">Suspicious headers</option>
+            <option value="static_blacklist">Static blacklist</option>
+            <option value="rate_limit_exceeded">Rate limit exceeded</option>
+          </select>
+        </div>
+      </div>
 
-      {loading && !data && (
-        <div className="border border-border rounded-xl overflow-hidden">
-          <table className="w-full border-collapse text-sm">
-            {logsTableHeader}
+      {error && !data && (
+        <p className="text-danger mb-3">Analytics backend is unavailable. Retrying...</p>
+      )}
+
+      {/* Table */}
+      <div className="border border-border rounded-lg overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-surface text-text-muted text-left text-xs">
+                <th className="px-4 py-3 font-medium">IP</th>
+                <th className="px-4 py-3 font-medium">Campaign</th>
+                <th className="px-4 py-3 font-medium">User-Agent</th>
+                <th className="px-4 py-3 font-medium">Reason</th>
+                <th className="px-4 py-3 font-medium">Date/Time</th>
+              </tr>
+            </thead>
             <tbody>
-              {Array.from({ length: 5 }).map((_, i) => (
-                <SkeletonLogsRow key={i} />
-              ))}
+              {loading && !data ? (
+                <tr><td colSpan={5} className="px-4 py-6 text-center text-text-muted">Loading...</td></tr>
+              ) : logs.length === 0 ? (
+                <tr><td colSpan={5} className="px-4 py-6 text-center text-text-muted">No logs found.</td></tr>
+              ) : (
+                logs.map((log) => (
+                  <tr
+                    key={log.id}
+                    className="border-t border-border"
+                    style={{ backgroundColor: rowTint(log.is_bot, log.reason) }}
+                  >
+                    <td className="px-4 py-3 font-mono text-xs text-text-main">{log.ip}</td>
+                    <td className="px-4 py-3 text-text-main">{log.campaign_id}</td>
+                    <td className="px-4 py-3 max-w-[380px] truncate text-text-muted" title={log.user_agent}>{log.user_agent}</td>
+                    <td className="px-4 py-3 whitespace-nowrap text-text-main">{formatReason(log.reason, log.is_bot)}</td>
+                    <td className="px-4 py-3 whitespace-nowrap text-text-muted">{formatDate(log.processed_at)}</td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
-      )}
 
-      {error && !data && (
-        <p className="text-danger">
-          Analytics backend is unavailable. Retrying every few seconds...
-        </p>
-      )}
-
-      {data && (
-        <>
-          {error && (
-            <p className="text-[#9a6b00] text-xs mb-4">
-              Connection issue - showing last known values.
-            </p>
-          )}
-
-          <div className="border border-border rounded-xl overflow-hidden">
-            <table className="w-full border-collapse text-sm">
-              {logsTableHeader}
-              <tbody>
-                {logEntries.length === 0 ? (
-                  <tr>
-                    <td colSpan={5} className="px-3.5 py-6 text-center text-text-muted">
-                      No logs yet.
-                    </td>
-                  </tr>
-                ) : (
-                  logEntries.map((entry) => (
-                    <tr key={entry.id} className={`border-t border-border ${rowClassForEntry(entry)}`}>
-                      <td className="px-3.5 py-2.5 font-mono">{entry.ip}</td>
-                      <td className="px-3.5 py-2.5 font-mono">{entry.campaign_id}</td>
-                      <td className="px-3.5 py-2.5 text-text-muted truncate max-w-[200px]">
-                        {entry.user_agent}
-                      </td>
-                      <td className="px-3.5 py-2.5 text-text-muted text-xs">
-                        {formatReason(entry.reason)}
-                      </td>
-                      <td className="px-3.5 py-2.5 text-text-muted text-xs whitespace-nowrap">
-                        {formatDateTime(entry.processed_at)}
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-
-          <TablePagination
-            page={data?.page ?? page}
-            totalPages={totalPages}
-            limit={limit}
-            onPageChange={handlePageChange}
-            onLimitChange={handleLimitChange}
+        {/* Pagination */}
+        <div className="flex items-center gap-3 px-4 py-3 border-t border-border text-xs text-text-muted">
+          <button
+            type="button"
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+            disabled={page <= 1}
+            className="px-3 py-1 rounded border border-border disabled:opacity-40 hover:bg-surface transition-colors"
+          >
+            Previous
+          </button>
+          <span>Page {page} of {totalPages}</span>
+          <input
+            type="text"
+            value={jumpValue}
+            onChange={(e) => setJumpValue(e.target.value)}
+            placeholder="Jump to..."
+            className="px-2 py-1 rounded border border-border bg-app-bg text-text-main w-20"
           />
-        </>
-      )}
+          <button
+            type="button"
+            onClick={() => {
+              const n = parseInt(jumpValue, 10);
+              if (!isNaN(n) && n >= 1 && n <= totalPages) { setPage(n); setJumpValue(''); }
+            }}
+            className="px-3 py-1 rounded border border-border hover:bg-surface transition-colors"
+          >
+            Go
+          </button>
+          <button
+            type="button"
+            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+            disabled={page >= totalPages}
+            className="px-3 py-1 rounded border border-border disabled:opacity-40 hover:bg-surface transition-colors ml-auto"
+          >
+            Next
+          </button>
+        </div>
+      </div>
     </Layout>
   );
 }
