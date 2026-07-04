@@ -86,6 +86,7 @@ func main() {
 	log.Println("Asynchronous Batch Logger started")
 
 	http.HandleFunc("/v1/click", handleClick)
+	http.HandleFunc("/v1/register", handleRegister)
 
 	log.Println("Core Engine API Gateway started on :8080")
 	if err := http.ListenAndServe(":8080", nil); err != nil {
@@ -100,7 +101,7 @@ func isSuspiciousUserAgent(ua string) bool {
 	}
 	uaLower := strings.ToLower(ua)
 	botTokens := []string{"curl", "python-requests", "go-http-client", "bot", "spider", "wget"}
-	
+
 	for _, token := range botTokens {
 		if strings.Contains(uaLower, token) {
 			return true
@@ -168,7 +169,7 @@ func handleClick(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 3) sliding window frequency threshold evaluation 
+	// 3) sliding window frequency threshold evaluation
 	key := fmt.Sprintf("rate:%s", ip)
 	currentRequests, err := rdb.Incr(ctx, key).Result()
 	if err != nil {
