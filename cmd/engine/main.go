@@ -34,6 +34,7 @@ var (
 	batchLogger *logger.BatchLogger
 	ctx         = context.Background()
 	maxRate     = 5
+	jwtSecret   string
 )
 
 func main() {
@@ -52,6 +53,7 @@ func main() {
 	dbUser := getEnv("DB_USER", "antifraud")
 	dbPassword := getEnv("DB_PASSWORD", "antifraud123")
 	dbName := getEnv("DB_NAME", "analytics")
+	jwtSecret = getEnv("JWT_SECRET", "super_secret_dev_key_change_in_prod")
 
 	connStr := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
 		dbHost, dbPort, dbUser, dbPassword, dbName)
@@ -87,6 +89,7 @@ func main() {
 
 	http.HandleFunc("/v1/click", handleClick)
 	http.HandleFunc("/v1/register", handleRegister)
+	http.HandleFunc("/v1/login", handleLogin)
 
 	log.Println("Core Engine API Gateway started on :8080")
 	if err := http.ListenAndServe(":8080", nil); err != nil {
