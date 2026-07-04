@@ -117,7 +117,7 @@ function RecentDetections() {
                       )}
                     </td>
 
-                    <td className="px-4 py-2.5 whitespace-nowrap font-mono text-xs text-text-muted">GET</td>
+                    <td className="px-4 py-2.5 whitespace-nowrap font-mono text-xs text-text-muted">POST</td>
 
                     <td className="px-4 py-2.5 max-w-[220px] truncate text-xs text-text-muted" title={row.user_agent}>{row.user_agent}</td>
                   </tr>
