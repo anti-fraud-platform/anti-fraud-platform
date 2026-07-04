@@ -91,6 +91,14 @@ func main() {
 	http.HandleFunc("/v1/register", handleRegister)
 	http.HandleFunc("/v1/login", handleLogin)
 
+	//valid token is needed
+	http.HandleFunc("/v1/me", authMiddleware(handleMe))
+
+	//"admin" role is needed
+	http.HandleFunc("/v1/admin/users", authMiddleware(requireRole("admin", handleAdminUsers)))
+
+	http.HandleFunc("/v1/attacks", authMiddleware(handleAttacks))
+
 	log.Println("Core Engine API Gateway started on :8080")
 	if err := http.ListenAndServe(":8080", nil); err != nil {
 		log.Fatal(err)
