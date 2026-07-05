@@ -36,6 +36,16 @@ function timeOf(iso) {
   }
 }
 
+function csvEscape(value) {
+  const str = String(value ?? '');
+
+  if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
+    return '"' + str.replace(/"/g, '""') + '"';
+  }
+
+  return str;
+}
+
 function RecentDetections() {
   const [page, setPage] = useState(1);
   const { data } = useLogs({ page, limit: 8 }, 2500);
@@ -44,11 +54,57 @@ function RecentDetections() {
   const total = data?.total ?? 0;
   const totalPages = data?.total_pages ?? 1;
 
+  const exportToCSV = () => {
+    if (total === 0) {
+      alert('No data to export');
+      return;
+    }
+								
+    const headers = [
+      'Time', 'Layer', 'Reason', 'Campaign', 'IP Address', 'Location', 'Status', 'Method', 'User Agent'
+    ];
+
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(row => [
+        timeOf(row.processed_at),
+        ( !row.is_bot ? "Allowed" : LAYER_INFO[row.reason]?.label ),
+        ( !row.is_bot ? '' : (row.reason || '') ),
+        csvEscape(row.campaign_id),
+        row.ip,
+        countryFor(row.ip).name,
+        row.is_bot ? "Blocked" : "Allowed",
+        "POST",
+        csvEscape(row.user_agent)
+      ].join(','))
+    ].join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    
+    link.setAttribute('href', url);
+    link.setAttribute('download', `recent_detections_export_${new Date().toISOString().slice(0,10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="border border-border rounded-lg overflow-hidden">
       <div className="px-4 py-3 border-b border-border flex items-center gap-2">
         <h2 className="text-sm font-semibold">Recent detections</h2>
         <span className="text-[10px] text-success font-semibold uppercase tracking-wide">Live</span>
+
+        <button
+          type="button"
+          onClick={exportToCSV}
+          disabled={total === 0}
+          className="ml-auto px-3 py-1 rounded border border-border disabled:opacity-40 hover:bg-surface transition-colors text-xs text-text-muted"
+        >
+        Export to CSV
+        </button>
       </div>
 
       <div className="overflow-x-auto">

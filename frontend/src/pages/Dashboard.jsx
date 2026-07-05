@@ -1,3 +1,4 @@
+import { MousePointerClick, ShieldAlert, CheckCircle, /* DollarSign,*/ Flag } from 'lucide-react';
 import Layout from '../components/Layout';
 import { useStats } from '../hooks/useStats';
 import StatCard from '../components/StatCard';
@@ -17,9 +18,12 @@ import SystemHealth from '../components/SystemHealth';
 function formatNumber(n) {
   return Number(n).toLocaleString('en-US');
 }
+
+/*
 function formatMoney(n) {
   return '$' + Number(n).toLocaleString('en-US', { maximumFractionDigits: 0 });
 }
+*/
 
 function Dashboard() {
   const { data, loading, error } = useStats(2500);
@@ -27,11 +31,11 @@ function Dashboard() {
 
   const statItems = data
     ? [
-        { label: 'Total clicks', value: formatNumber(data.total_clicks), danger: false, icon: '👆', delta: '18.4%', deltaUp: true },
-        { label: 'Blocked clicks', value: formatNumber(data.blocked_count ?? data.blocked_bots), danger: true, icon: '🛡️', delta: '24.6%', deltaUp: true },
-        { label: 'Allowed clicks', value: formatNumber(data.allowed_count ?? 0), danger: false, icon: '✅', delta: '11.2%', deltaUp: true },
-        { label: 'Money saved', value: formatMoney(data.budget_saved), danger: false, icon: '💰', delta: '19.2%', deltaUp: true },
-        { label: 'Active campaigns', value: formatNumber((data.campaigns ?? []).length), danger: false, icon: '🚩', delta: '2', deltaUp: true },
+        { label: 'Total clicks', value: formatNumber(data.total_clicks), danger: false, icon: <MousePointerClick/>, delta: '18.4%', deltaUp: true },
+        { label: 'Blocked clicks', value: formatNumber(data.blocked_count ?? data.blocked_bots), danger: true, icon: <ShieldAlert/>, delta: '24.6%', deltaUp: true },
+        { label: 'Allowed clicks', value: formatNumber(data.allowed_count ?? 0), danger: false, icon: <CheckCircle/>, delta: '11.2%', deltaUp: true },
+        /*{ label: 'Money saved', value: formatMoney(data.budget_saved), danger: false, icon: <DollarSign/>, delta: '19.2%', deltaUp: true },*/
+        { label: 'Active campaigns', value: formatNumber((data.campaigns ?? []).length), danger: false, icon: <Flag/>, delta: '2', deltaUp: true },
       ]
     : [];
 
@@ -40,10 +44,9 @@ function Dashboard() {
   const reasonBreakdown = data?.reason_breakdown ?? {};
 
   return (
-    <Layout title="Dashboard">
+    <Layout title="Dashboard" error={error}>
       {loading && !data && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-          <SkeletonCard />
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           <SkeletonCard />
           <SkeletonCard />
           <SkeletonCard />
@@ -69,7 +72,7 @@ function Dashboard() {
             {/* LEFT: wide main column */}
             <div className="xl:col-span-3 flex flex-col gap-4">
               {/* Stat cards */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                 {statItems.map((item, idx) => (
                   <StatCard
                     key={idx}

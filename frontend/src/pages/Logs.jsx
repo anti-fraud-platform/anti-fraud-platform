@@ -53,7 +53,7 @@ function Logs() {
   const totalPages = data?.total_pages ?? 1;
 
   return (
-    <Layout title="Logs">
+    <Layout title="Logs" error={error}>
       {/* Filters */}
       <div className="flex flex-wrap gap-4 mb-4">
         <div className="flex flex-col gap-1">
