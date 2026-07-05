@@ -1,21 +1,29 @@
+import { House, Logs, ShieldBan, Shield, Fingerprint, Search } from 'lucide-react';
 import { NavLink } from 'react-router-dom';
 import { useTheme } from '../hooks/useTheme';
 
 const navItems = [
-  { to: '/', label: 'Dashboard' },
-  { to: '/logs', label: 'Logs' },
-  { to: '/blacklist', label: 'Blacklist' },
+  { to: '/', label: 'Dashboard', icon: <House/> },
+  { to: '/logs', label: 'Logs', icon: <Logs/> },
+  { to: '/blacklist', label: 'Blacklist', icon: <ShieldBan></ShieldBan> },
 ];
 
-function Layout({ title, children }) {
+function Layout({ title, error, children }) {
   const { theme, toggleTheme } = useTheme();
 
   return (
     <div className="flex min-h-screen font-sans text-text-main">
       <aside className="w-[200px] bg-surface flex-shrink-0 flex flex-col">
         <div className="border-b border-border py-4">
-          <div className="text-center text-base font-semibold text-primary">
-            AntiFraud
+          <div className="flex flex-col items-center text-center">
+            <div style={{color: "#8b7cf6"}}>
+              <Shield size={40}>
+                <Fingerprint size={10} x={7} y={7} />
+                <Search size={12} x={12} y={12} />
+              </Shield>
+            </div>
+            <h1 className="text-base font-semibold">ANTIFRAUD</h1>
+            <p className="text-xs text-text-muted">Click Fraud Protection</p>
           </div>
         </div>
         <nav className="flex-1 px-3 py-4 flex flex-col gap-1">
@@ -25,14 +33,15 @@ function Layout({ title, children }) {
               to={item.to}
               end={item.to === '/'}
               className={({ isActive }) =>
-                `block py-2 rounded-lg text-sm text-center ${
+                `flex items-center gap-3 px-4 py-2 rounded-lg text-sm ${
                   isActive
                     ? 'text-primary bg-primary-light'
                     : 'text-text-muted hover:bg-primary-light'
                 }`
               }
             >
-              {item.label}
+              {item.icon}
+              <div>{item.label}</div>
             </NavLink>
           ))}
         </nav>
@@ -60,8 +69,14 @@ function Layout({ title, children }) {
               )}
             </button>
 
-            <span className="bg-success-light text-success text-xs px-2.5 py-1 rounded-lg">
-              Live
+            <span
+              className={`text-xs px-2.5 py-1 rounded-lg ${
+                error
+                  ? 'bg-danger-light text-danger'
+                  : 'bg-success-light text-success'
+              }`}
+            >
+              {error ? 'Error' : 'Live'}
             </span>
             <div className="w-8 h-8 rounded-full bg-primary-light flex items-center justify-center text-xs text-primary font-semibold">
               TD

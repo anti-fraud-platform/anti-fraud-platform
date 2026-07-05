@@ -76,7 +76,7 @@ function Blacklist() {
   };
 
   return (
-    <Layout title="Blacklist">
+    <Layout title="Blacklist" error={error}>
       <div className="flex justify-between items-center mb-4">
         <div className="text-sm text-text-muted">
           {blacklistData.length > 0 && `Showing ${blacklistData.length} blocked IPs`}
