@@ -54,7 +54,7 @@ var (
 	requireChallenge  = true
 	requireHeaderCheck = true
 	// Tier 2: risk threshold and dynamic blacklist settings
-    riskThreshold = 4                // score >= this => blocked as "risk_score_exceeded"
+    riskThreshold = 3                // score >= this => blocked as "risk_score_exceeded"
     dynBlacklistThreshold = 5        // 5+ flagged hits in window
     dynBlacklistWindow = time.Hour   // rolling window for auto-promotion
     dynBlacklistSetKey = "af:dynamic_blacklist"  // Redis set of permanently blocked IPs
@@ -302,13 +302,13 @@ func handleClick(w http.ResponseWriter, r *http.Request) {
         if err := challenge.Validate(r.Context(), challengeStore, payload.ChallengeID, payload.ChallengeToken); err != nil {
             switch err {
             case challenge.ErrNotFound:
-                riskScore += 4
+                riskScore += 3
                 riskReasons = append(riskReasons, "no_js_challenge")
             case challenge.ErrTooFast:
-                riskScore += 4
+                riskScore += 3
                 riskReasons = append(riskReasons, "challenge_too_fast")
             case challenge.ErrMismatch:
-                riskScore += 4
+                riskScore += 3
                 riskReasons = append(riskReasons, "challenge_mismatch")
             }
         }

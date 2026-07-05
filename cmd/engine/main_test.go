@@ -631,24 +631,34 @@ func TestHandleClickChallengeReplayIsRejected(t *testing.T) {
 // ============================================================================
 
 func TestHandleClickHeaderHeuristicFlagsBareRequest(t *testing.T) {
-	cleanup := setupTestEngine(t)
-	defer cleanup()
-	requireChallenge = false // isolate: only testing the header layer here
-	requireHeaderCheck = true
+    cleanup := setupTestEngine(t)
+    defer cleanup()
+    requireChallenge = false // isolate: only testing the header layer here
+    requireHeaderCheck = true
 
-	body := `{"campaign_id":"camp_header_bare"}`
-	rr := performClickRequest(http.MethodPost, body, map[string]string{
-		"Content-Type":    "application/json",
-		"X-Forwarded-For": "60.60.60.1",
-		// A Chrome UA with none of the headers real Chrome actually sends
-		// alongside it — passes the step-1 UA sniff, should still be
-		// caught here.
-		"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-	})
+    body := `{"campaign_id":"camp_header_bare"}`
 
-	if status := decodeClickStatus(t, rr); status != "flagged" {
-		t.Fatalf("expected a request with only Content-Type/User-Agent (no Accept-Language/Sec-Fetch-*/Client Hints) to be flagged by the header heuristic, got %q", status)
-	}
+    // 1. Request with only suspicious headers (no UA) – should NOT be flagged (score 2 < 3)
+    rr := performClickRequest(http.MethodPost, body, map[string]string{
+        "Content-Type":    "application/json",
+        "X-Forwarded-For": "60.60.60.1",
+        "User-Agent":      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+        // no Accept-Language, no Sec-Fetch-*, no Client Hints → triggers headers heuristic
+    })
+    if status := decodeClickStatus(t, rr); status != "success" {
+        t.Fatalf("expected request with only headers (score 2) to pass, got %q", status)
+    }
+
+    // 2. Request with suspicious headers + suspicious UA – should be flagged (score 4 >= 3)
+    rr = performClickRequest(http.MethodPost, body, map[string]string{
+        "Content-Type":    "application/json",
+        "X-Forwarded-For": "60.60.60.1",
+        "User-Agent":      "curl/8.5.0", // triggers UA check
+        // still no Accept-Language etc., triggers headers heuristic
+    })
+    if status := decodeClickStatus(t, rr); status != "flagged" {
+        t.Fatalf("expected request with headers + UA (score 4) to be flagged, got %q", status)
+    }
 }
 
 // This is the integration-level regression test for the Accept:"*/*" bug

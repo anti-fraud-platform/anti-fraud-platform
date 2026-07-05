@@ -1,25 +1,53 @@
-Hello guys
-this is what i ve done in this task:
-Dynamic blacklist (Redis-based, auto-promotion after 5 violations in 1 hour)
-Risk score (soft checks accumulate, final decision at threshold 4)
-Fingerprint rate limiter (IP + UA + Accept-Language + Accept-Encoding)
-Per-campaign cost configuration (table campaigns)
-7-day deltas in /stats endpoint
-Reason breakdown in /trend endpoint
-total_requests field in top blocked IPs
-Health checks for Redis, PostgreSQL, Bloom filter
-GeoIP support (optional, works without database)
-Nginx click simulator restored
-Removed obsolete Docker Compose version warning
-All changes implemented as targeted modifications (no complete rewrites)
+# Anti-Fraud Platform – Tier 2 Implementation Report
 
-List of Changes
-1. Database Schema Updates (deployments/init-db.sql)
+## Overview
 
-2. Logger Enhancement (internal/logger/batch_logger.go)
-Modified ClickLog Structure:
+I have successfully implemented all **Tier 2** features as requested. The platform now includes:
 
+- ✅ Dynamic adaptive blacklist (Redis-based, auto‑promotion after 5 violations in 1 hour)
+- ✅ Risk score (soft checks accumulate points, decision at threshold 3)
+- ✅ Fingerprint rate limiter (IP + User‑Agent + Accept‑Language + Accept‑Encoding)
+- ✅ Per‑campaign cost configuration (`campaigns` table)
+- ✅ 7‑day deltas in `/stats`
+- ✅ Reason breakdown in `/trend` (returns `{"data": [...]}` with per‑day breakdown)
+- ✅ `total_requests` field in top blocked IPs
+- ✅ Health endpoints (`/health` on engine and analytics)
+- ✅ GeoIP support (optional, gracefully degrades)
+- ✅ Nginx click simulator restored with JS challenge flow
+- ✅ Removed obsolete Docker Compose version warning
+- ✅ All changes are targeted, no full file rewrites
+
+---
+
+## List of Changes
+
+### 1. Database Schema Updates (`deployments/init-db.sql`)
+
+```sql
+-- New tables and columns for Tier 2
+CREATE TABLE IF NOT EXISTS campaigns (
+    campaign_id VARCHAR(128) PRIMARY KEY,
+    cost_per_click DECIMAL(10,2) NOT NULL DEFAULT 5.00
+);
+
+ALTER TABLE click_logs
+    ADD COLUMN IF NOT EXISTS country CHAR(2),
+    ADD COLUMN IF NOT EXISTS risk_score INT,
+    ADD COLUMN IF NOT EXISTS risk_reasons TEXT;
+
+CREATE TABLE IF NOT EXISTS dynamic_blacklist (
+    ip VARCHAR(45) PRIMARY KEY,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    reason TEXT,
+    expires_at TIMESTAMPTZ
+);
 ```
+
+### 2. Logger Enhancement (`internal/logger/batch_logger.go`)
+
+**Modified `ClickLog` Structure:**
+
+```go
 type ClickLog struct {
     IP          string
     CampaignID  string
@@ -28,21 +56,24 @@ type ClickLog struct {
     Reason      string
     Country     string   // Tier 2: GeoIP country code
     RiskScore   int      // Tier 2: accumulated risk score
-    RiskReasons string   // Tier 2: reasons list
+    RiskReasons string   // Tier 2: reasons list (comma-separated)
 }
 ```
-Added GeoIP Support:
 
-geoReader field added to BatchLogger for GeoIP2 database
-GeoIP database loaded from /usr/share/GeoIP/GeoLite2-Country.mmdb (optional)
-Country determination happens during batch flush – if GeoIP unavailable, country field remains empty
-No errors or crashes if database file is missing - only a warning in logs
+**Added GeoIP Support:**
 
-3. Engine (cmd/engine/main.go)
+- `geoReader` field added to `BatchLogger` for GeoIP2 database
+- GeoIP database loaded from `/usr/share/GeoIP/GeoLite2-Country.mmdb` (optional)
+- Country determination happens during batch flush – if GeoIP unavailable, country field remains empty
+- **No errors or crashes if database file is missing** – only a warning in logs
 
-Fingerprint Rate Limiter:
+---
 
-```
+### 3. Engine (`cmd/engine/main.go`)
+
+**Fingerprint Rate Limiter:**
+
+```go
 func fingerprint(r *http.Request) string {
     ip := getClientIP(r)
     ua := r.UserAgent()
@@ -53,182 +84,264 @@ func fingerprint(r *http.Request) string {
     return hex.EncodeToString(hash[:])
 }
 ```
-Rate limiting now keys on IP + User-Agent + Accept-Language + Accept-Encoding
-Prevents IP rotation attacks – bots changing IP keep the same fingerprint
 
-Dynamic Blacklist (Redis-based):
+- Rate limiting now keys on IP + User-Agent + Accept-Language + Accept-Encoding
+- Prevents IP rotation attacks – bots changing IP keep the same fingerprint
 
-IPs with 5+ violations in a 1-hour window are promoted to dynamic blacklist
-Stored in Redis set: af:dynamic_blacklist
-Automatic expiration of violation counters after 1 hour
-IPs in blacklist get immediate 403 response, bypassing all other checks
+**Dynamic Blacklist (Redis-based):**
 
-Risk Score Implementation:
+- IPs with 5+ violations in a 1-hour window are promoted to dynamic blacklist
+- Stored in Redis set: `af:dynamic_blacklist`
+- Automatic expiration of violation counters after 1 hour
+- IPs in blacklist get immediate 403 response, bypassing all other checks
+
+**Risk Score Implementation:**
 
 Each soft check contributes to cumulative score:
 
-suspicious_agent → +2
-no_js_challenge / challenge_too_fast / challenge_mismatch → +3
-suspicious_headers → +2
-If riskScore >= 4, click is blocked with reason risk_score_exceeded
-Violation counter increments asynchronously for dynamic blacklist promotion
+- `suspicious_agent` → +2
+- `no_js_challenge` / `challenge_too_fast` / `challenge_mismatch` → +3
+- `suspicious_headers` → +2
 
-New Health Endpoint:
-```
+If `riskScore >= 3`, the click is blocked. The `reason` field is preserved intelligently:
+- When only one check fires → `reason = that specific check name` (e.g., `no_js_challenge`)
+- When multiple checks fire → `reason = risk_score_exceeded`
+
+Violation counter increments asynchronously for dynamic blacklist promotion.
+
+**New Health Endpoint:**
+
+```go
 http.HandleFunc("/health", healthHandler)
 ```
+
 Returns status of Redis, PostgreSQL, and Bloom filter.
 
-4. Analytics (cmd/analytics/main.go)
+---
 
-Enhanced /stats Endpoint:
+### 4. Analytics (`cmd/analytics/main.go`)
 
-Added previous_total_clicks, previous_blocked_count (period: 14-7 days ago)
-Added total_clicks_delta_percent, blocked_count_delta_percent
-Per-campaign saved_money_usd now uses custom cost_per_click from campaigns table
-Top blocked IPs now return both blocked count and total_requests
-Enhanced /trend Endpoint:
+**Enhanced `/stats` Endpoint:**
 
-Two-stage query: aggregate totals per day, then breakdown by reason
-Each day returns: date, total_clicks, allowed_count, blocked_count, breakdown (map reason → count)
-Response wrapped in {"data": [...]} for frontend compatibility
-New Health Endpoint:
+- Added `previous_total_clicks`, `previous_blocked_count` (period: 14–7 days ago)
+- Added `total_clicks_delta_percent`, `blocked_count_delta_percent`
+- Per-campaign `saved_money_usd` now uses custom `cost_per_click` from `campaigns` table
+- Top blocked IPs now return both `blocked` count and `total_requests`
 
-go
+**Enhanced `/trend` Endpoint:**
+
+- Two-stage query: aggregate totals per day, then breakdown by reason
+- Each day returns: `date`, `total_clicks`, `allowed_count`, `blocked_count`, `breakdown` (map reason → count)
+- Response wrapped in `{"data": [...]}` for frontend compatibility
+
+**New Health Endpoint:**
+
+```go
 http.HandleFunc("/health", healthHandler)
+```
+
 Returns PostgreSQL health status.
 
-5. Infrastructure Changes
+---
 
-Docker Compose (docker-compose.yml):
+### 5. Infrastructure Changes
 
-Removed version: '3.8' (obsolete attribute warning fixed)
-Updated nginx volume from html to clicker folder
-Added (commented out) GeoIP volume for engine:
+**Docker Compose (`docker-compose.yml`):**
 
-yaml
+- Removed `version: '3.8'` (obsolete attribute warning fixed)
+- Updated nginx volume to use `./deployments/nginx/html` (pulled from main branch)
+- GeoIP volume available (commented out by default):
+
+```yaml
 # - ./geoip/GeoLite2-Country.mmdb:/usr/share/GeoIP/GeoLite2-Country.mmdb:ro
-Nginx Configuration (deployments/nginx/engine.conf):
+```
 
-Added /health location to proxy health checks:
+**Nginx Configuration (`deployments/nginx/engine.conf`):**
 
-nginx
+Added `/health` location to proxy health checks:
+
+```nginx
 location /health {
     proxy_pass http://core_engine/health;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
 }
-Click Simulator:
+```
 
-Created deployments/nginx/clicker/index.html
-Two buttons: "Send Manual Click" and "Simulate Bot Attack"
+**Click Simulator:**
 
-How It All Works Together
+The click simulator page now includes the full JS challenge flow:
+- Three buttons: "Send Real Click (solves JS challenge)", "Send Click Without Solving Challenge", and "Legacy Naive Bot Flag (before)"
+- Fetches challenge from `/v1/challenge`, solves it via `crypto.subtle`
+- Demonstrates both successful and failing challenge scenarios
 
-Click Processing Pipeline
+---
 
-Request Arrives → nginx proxies to engine, sets X-Forwarded-For
-Dynamic Blacklist Check → if IP in Redis set, 403 immediately
-Static Blacklist Check → Bloom filter test against 12,000 IPs
-Rate Limiter → fingerprint-based: 5 requests/second per fingerprint
-Risk Score Accumulation (all checks run, none interrupt):
+## How It All Works Together
 
-User-Agent check → +2 if suspicious
-JS challenge check → +3 if missing/too fast/mismatch
-Header heuristic → +2 if suspicious
-Decision:
+### Click Processing Pipeline
 
-If riskScore >= 4: block with reason risk_score_exceeded
-If riskScore < 4: allow with reason allowed
-Asynchronous Actions:
+1. **Request Arrives** → nginx proxies to engine, sets `X-Forwarded-For`
+2. **Dynamic Blacklist Check** → if IP in Redis set, 403 immediately
+3. **Static Blacklist Check** → Bloom filter test against 12,000 IPs
+4. **Rate Limiter** → fingerprint-based: 5 requests/second per fingerprint
+5. **Risk Score Accumulation** (all checks run, none interrupt):
+   - User-Agent check → +2 if suspicious
+   - JS challenge check → +3 if missing/too fast/mismatch
+   - Header heuristic → +2 if suspicious
+6. **Decision**:
+   - If `riskScore >= 3`: block with reason (specific if single check, otherwise `risk_score_exceeded`)
+   - If `riskScore < 3`: allow with reason `allowed`
+7. **Asynchronous Actions**:
+   - Log to batch logger (PostgreSQL)
+   - Increment dynamic blacklist counter if blocked
+   - If counter reaches 5 in 1 hour → add IP to Redis blacklist
+8. **Response** → `{"status":"success"}` or `{"status":"flagged"}`
 
-Log to batch logger (PostgreSQL)
-Increment dynamic blacklist counter if blocked
-If counter reaches 5 in 1 hour → add IP to Redis blacklist
-Response → {"status":"success"} or {"status":"flagged"}
-Dynamic Blacklist Mechanism
+### Dynamic Blacklist Mechanism
 
-text
-Client request → riskScore >= 4 → increment counter(IP)
+```
+Client request → riskScore >= 3 → increment counter(IP)
                                     ↓
                         counter == 5 in 1 hour? → SADD af:dynamic_blacklist IP
                                     ↓
                         All future requests from IP → 403
-GeoIP Integration
+```
 
-text
+### GeoIP Integration
+
+```
 Batch flush → for each log entry:
     if geoReader != nil → lookup country by IP → insert country
     else → insert empty country
-Testing Results
+```
 
-Health Checks Working:
+---
 
-bash
+## Testing Results
+
+### Health Checks Working:
+
+```bash
 curl -s http://localhost:9090/health | python3 -m json.tool
 # {"blacklist_loaded":true,"postgres":"healthy","redis":"healthy"}
 
 curl -s http://localhost:8082/health | python3 -m json.tool
 # {"postgres":"healthy"}
-Rate Limiter Working:
+```
 
-5 identical requests in 1 second → HTTP 200
-6th request in same second → HTTP 429
-Different User-Agent → new fingerprint → HTTP 200
-Dynamic Blacklist Working:
+### Rate Limiter Working:
 
-6 flagged requests from same IP → IP added to Redis set af:dynamic_blacklist
-Subsequent request from same IP → 403 with "Blocked by dynamic blacklist"
-Statistics Working:
+- 5 identical requests in 1 second → HTTP 200
+- 6th request in same second → HTTP 429
+- Different User-Agent → new fingerprint → HTTP 200
 
-json
+### Dynamic Blacklist Working:
+
+- 6 flagged requests from same IP → IP added to Redis set `af:dynamic_blacklist`
+- Subsequent request from same IP → 403 with "Blocked by dynamic blacklist"
+
+### Statistics Working:
+
+```json
 {
-    "total_clicks": 3,
-    "allowed_count": 1,
-    "blocked_count": 2,
+    "total_clicks": 16,
+    "allowed_count": 13,
+    "blocked_count": 3,
     "top_blocked_ips": [
         {
             "ip": "192.168.65.1",
-            "blocked": 2,
-            "total_requests": 3
+            "blocked": 3,
+            "total_requests": 16
         }
     ],
-    "previous_total_clicks": 0,
-    "total_clicks_delta_percent": 0,
     "reason_breakdown": {
+        "no_js_challenge": 1,
         "risk_score_exceeded": 2
-    }
+    },
+    "js_challenge_blocked": 1,
+    "header_heuristic_blocked": 0
 }
-Instructions for My Colleague to Set Up GeoIP
+```
 
-Since I cannot download the GeoIP database, I have prepared the following instructions for my colleague in another country:
+### Trend Endpoint Working:
 
-Setup Instructions
+```json
+{
+    "data": [
+        {
+            "date": "2026-07-05",
+            "total_clicks": 16,
+            "allowed_count": 13,
+            "blocked_count": 3,
+            "breakdown": {
+                "no_js_challenge": 1,
+                "risk_score_exceeded": 2
+            }
+        }
+    ]
+}
+```
 
-Download the GeoIP Database:
+### All Tests Passing:
 
-Visit https://www.maxmind.com/en/geolite2/signup
-Create a free account
-Download GeoLite2-Country.mmdb from https://www.maxmind.com/en/accounts/current/downloads/geoip
-Add the Database to the Project:
+```bash
+go test ./cmd/engine -v -race -count=1
+# All tests PASS
+```
 
-bash
-# From the project root:
-mkdir -p geoip
-cp ~/Downloads/GeoLite2-Country.mmdb geoip/
-Uncomment the Volume in docker-compose.yml:
+---
 
-yaml
-volumes:
-  - ./deployments/blacklists/dirty_ips.txt:/app/data/dirty_ips.txt:ro
-  - ./geoip/GeoLite2-Country.mmdb:/usr/share/GeoIP/GeoLite2-Country.mmdb:ro  # ← uncomment this line
-Rebuild and Restart Engine:
+## Instructions for GeoIP Setup
 
-bash
-docker compose up -d --no-deps --build engine
-Verify the Country Lookup:
+Since I cannot download the GeoIP database due to regional restrictions, the following instructions are provided for colleagues in other countries:
 
-bash
-docker exec -it antifraud-postgres psql -U antifraud -d analytics -c "SELECT ip, country FROM click_logs ORDER BY processed_at DESC LIMIT 5;"
-Should show two-letter country codes (e.g., US, DE, FR, RU).
+### Setup Instructions
+
+1. **Download the GeoIP Database:**
+   - Visit https://www.maxmind.com/en/geolite2/signup
+   - Create a free account
+   - Download `GeoLite2-Country.mmdb` from https://www.maxmind.com/en/accounts/current/downloads/geoip
+
+2. **Add the Database to the Project:**
+   ```bash
+   # From the project root:
+   mkdir -p geoip
+   cp ~/Downloads/GeoLite2-Country.mmdb geoip/
+   ```
+
+3. **Uncomment the Volume in `docker-compose.yml`:**
+   ```yaml
+   volumes:
+     - ./deployments/blacklists/dirty_ips.txt:/app/data/dirty_ips.txt:ro
+     - ./geoip/GeoLite2-Country.mmdb:/usr/share/GeoIP/GeoLite2-Country.mmdb:ro
+   ```
+
+4. **Rebuild and Restart Engine:**
+   ```bash
+   docker compose up -d --no-deps --build engine
+   ```
+
+5. **Verify the Country Lookup:**
+   ```bash
+   docker exec -it antifraud-postgres psql -U antifraud -d analytics -c "SELECT ip, country FROM click_logs ORDER BY processed_at DESC LIMIT 5;"
+   ```
+   Should show two-letter country codes (e.g., `US`, `DE`, `FR`, `RU`).
+
+---
+
+## Conclusion
+
+All Tier 2 requirements are complete:
+
+- ✅ Adaptive blacklist learns from attack patterns
+- ✅ Risk score combines multiple signals with differentiated weights
+- ✅ Fingerprint rate limiting prevents IP rotation evasion
+- ✅ Per-campaign cost tracking for accurate budget savings
+- ✅ Enhanced analytics with deltas and reason breakdowns
+- ✅ GeoIP support with graceful degradation
+- ✅ Health checks for production monitoring
+- ✅ All changes are targeted and maintainable
+
+The system is ready for production deployment.
