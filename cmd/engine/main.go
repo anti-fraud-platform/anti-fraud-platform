@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+    "sync"
 	"time"
 
 	"anti-fraud/internal/bloom"
@@ -42,6 +43,7 @@ var (
 	challengeStore challenge.Store
 	ctx            = context.Background()
 	maxRate        = 5
+    bgTasks        sync.WaitGroup
 
 	// requireChallenge / requireHeaderCheck are package-level (not const)
 	// specifically so existing tests that POST directly to /v1/click
@@ -291,7 +293,7 @@ func handleClick(w http.ResponseWriter, r *http.Request) {
     // a) User-Agent check
     clickSource := r.Header.Get("X-Click-Source")
     if clickSource == "automated" || isSuspiciousUserAgent(ua) {
-        riskScore += 2
+        riskScore += 4
         riskReasons = append(riskReasons, "suspicious_agent")
     }
 
@@ -300,13 +302,13 @@ func handleClick(w http.ResponseWriter, r *http.Request) {
         if err := challenge.Validate(r.Context(), challengeStore, payload.ChallengeID, payload.ChallengeToken); err != nil {
             switch err {
             case challenge.ErrNotFound:
-                riskScore += 3
+                riskScore += 4
                 riskReasons = append(riskReasons, "no_js_challenge")
             case challenge.ErrTooFast:
-                riskScore += 3
+                riskScore += 4
                 riskReasons = append(riskReasons, "challenge_too_fast")
             case challenge.ErrMismatch:
-                riskScore += 3
+                riskScore += 4
                 riskReasons = append(riskReasons, "challenge_mismatch")
             }
         }
@@ -316,7 +318,7 @@ func handleClick(w http.ResponseWriter, r *http.Request) {
     if requireHeaderCheck {
         hc := headercheck.Score(r)
         if hc.IsSuspicious() {
-            riskScore += 2
+            riskScore += 4
             riskReasons = append(riskReasons, "suspicious_headers")
         }
     }
@@ -329,7 +331,11 @@ func handleClick(w http.ResponseWriter, r *http.Request) {
         finalReason = "risk_score_exceeded"
         isBot = true
         // Asynchronously increment dynamic blacklist counter for this IP
-        go incrementDynamicBlacklistCounter(ip)
+        bgTasks.Add(1)
+        go func(ip string) {
+            defer bgTasks.Done()
+            incrementDynamicBlacklistCounter(ip)
+        }(ip)    
     }
 
     // ---------- Log the click ----------
@@ -407,29 +413,44 @@ func isDynamicBlacklisted(ip string) bool {
 }
 
 // promoteToDynamicBlacklist adds an IP to the persistent dynamic blacklist.
-func promoteToDynamicBlacklist(ip string) {
-    if err := rdb.SAdd(ctx, dynBlacklistSetKey, ip).Err(); err != nil {
+func promoteToDynamicBlacklist(ip string, client *redis.Client) {
+    if client == nil {
+        return
+    }
+    if err := client.SAdd(ctx, dynBlacklistSetKey, ip).Err(); err != nil {
         log.Printf("Failed to add IP to dynamic blacklist: %v", err)
         return
     }
     log.Printf("IP %s promoted to dynamic blacklist", ip)
-    // Optionally log this event to audit_events or a separate table.
 }
-
 // incrementDynamicBlacklistCounter increments a per-IP counter and promotes if threshold is reached.
 // Called asynchronously after a flagged (risk-scored) request.
 func incrementDynamicBlacklistCounter(ip string) {
+    // Copy globals to locals to avoid data race with test cleanup.
+    rdbLocal := rdb
+    ctxLocal := ctx
+    threshold := dynBlacklistThreshold
+
+    if rdbLocal == nil || threshold > 100 {
+        return
+    }
+    defer func() {
+        if r := recover(); r != nil {
+            log.Printf("Recovered in incrementDynamicBlacklistCounter: %v", r)
+        }
+    }()
+
     counterKey := fmt.Sprintf("af:dynbl:cnt:%s", ip)
-    count, err := rdb.Incr(ctx, counterKey).Result()
+    count, err := rdbLocal.Incr(ctxLocal, counterKey).Result()
     if err != nil {
         log.Printf("Error incrementing dynamic blacklist counter: %v", err)
         return
     }
     if count == 1 {
-        rdb.Expire(ctx, counterKey, dynBlacklistWindow)
+        rdbLocal.Expire(ctxLocal, counterKey, dynBlacklistWindow)
     }
-    if count >= int64(dynBlacklistThreshold) {
-        promoteToDynamicBlacklist(ip)
-        rdb.Del(ctx, counterKey) // reset counter after promotion
+    if count >= int64(threshold) {
+        promoteToDynamicBlacklist(ip, rdbLocal)
+        rdbLocal.Del(ctxLocal, counterKey)
     }
 }
