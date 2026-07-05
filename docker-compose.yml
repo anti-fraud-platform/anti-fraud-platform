@@ -29,6 +29,8 @@ services:
       - "8080"
     volumes:
       - ./deployments/blacklists/dirty_ips.txt:/app/data/dirty_ips.txt:ro
+      #- ./geoip/GeoLite2-Country.mmdb:/usr/share/GeoIP/GeoLite2-Country.mmdb:ro
+
     depends_on:
       postgres:
         condition: service_healthy
@@ -45,7 +47,7 @@ services:
       - "9090:9090"
     volumes:
       - ./deployments/nginx/engine.conf:/etc/nginx/conf.d/default.conf:ro
-      - ./deployments/nginx/html:/usr/share/nginx/html:ro
+      - ./deployments/nginx/clicker:/usr/share/nginx/html:ro    
     depends_on:
       - engine
     networks:

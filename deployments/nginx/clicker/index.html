@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Click Simulator</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; background: #111; color: #eee; }
+        button { padding: 12px 24px; margin: 10px; font-size: 16px; border: none; border-radius: 6px; cursor: pointer; }
+        #manual { background: #2a7; color: #000; }
+        #bot { background: #c44; color: #fff; }
+        #output { margin-top: 20px; white-space: pre-wrap; background: #222; padding: 12px; border-radius: 6px; }
+    </style>
+</head>
+<body>
+    <h1>🧪 Click Simulator</h1>
+    <button id="manual">👆 Send Manual Click</button>
+    <button id="bot">🤖 Simulate Bot Attack</button>
+    <div id="output">Waiting for clicks...</div>
+
+    <script>
+        const output = document.getElementById('output');
+
+        async function sendClick(url, payload = {}) {
+            output.textContent = 'Sending...';
+            try {
+                const res = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const text = await res.text();
+                output.textContent = `Status: ${res.status}\nResponse: ${text}`;
+            } catch (err) {
+                output.textContent = `Error: ${err.message}`;
+            }
+        }
+
+        document.getElementById('manual').addEventListener('click', () => {
+            sendClick('/click', { campaign_id: 'manual' });
+        });
+
+        document.getElementById('bot').addEventListener('click', () => {
+            sendClick('/bot/click', { campaign_id: 'bot_sim' });
+        });
+    </script>
+</body>
+</html>
