@@ -285,15 +285,15 @@ func handleClick(w http.ResponseWriter, r *http.Request) {
         }
     }
 
-    // ---------- Soft checks (accumulate risk score) ----------
+        // ---------- Soft checks (accumulate risk score) ----------
 
     riskScore := 0
     riskReasons := []string{}
+    clickSource := r.Header.Get("X-Click-Source")
 
     // a) User-Agent check
-    clickSource := r.Header.Get("X-Click-Source")
     if clickSource == "automated" || isSuspiciousUserAgent(ua) {
-        riskScore += 4
+        riskScore += 2
         riskReasons = append(riskReasons, "suspicious_agent")
     }
 
@@ -318,7 +318,7 @@ func handleClick(w http.ResponseWriter, r *http.Request) {
     if requireHeaderCheck {
         hc := headercheck.Score(r)
         if hc.IsSuspicious() {
-            riskScore += 4
+            riskScore += 2
             riskReasons = append(riskReasons, "suspicious_headers")
         }
     }
@@ -328,15 +328,21 @@ func handleClick(w http.ResponseWriter, r *http.Request) {
     finalReason := "allowed"
     isBot := false
     if riskScore >= riskThreshold {
-        finalReason = "risk_score_exceeded"
         isBot = true
+        // If only one check fired, use that specific reason for better analytics breakdown.
+        if len(riskReasons) == 1 {
+            finalReason = riskReasons[0]
+        } else {
+            finalReason = "risk_score_exceeded"
+        }
         // Asynchronously increment dynamic blacklist counter for this IP
         bgTasks.Add(1)
         go func(ip string) {
             defer bgTasks.Done()
             incrementDynamicBlacklistCounter(ip)
-        }(ip)    
+        }(ip)
     }
+
 
     // ---------- Log the click ----------
     if batchLogger != nil {

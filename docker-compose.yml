@@ -47,7 +47,7 @@ services:
       - "9090:9090"
     volumes:
       - ./deployments/nginx/engine.conf:/etc/nginx/conf.d/default.conf:ro
-      - ./deployments/nginx/clicker:/usr/share/nginx/html:ro    
+      - ./deployments/nginx/html:/usr/share/nginx/html:ro
     depends_on:
       - engine
     networks:
