@@ -29,6 +29,7 @@ yarn-error.log*
 .env.local
 .env.*.local
 *.pem
+.cache
 
 # --- Editor / OS noise ---
 .DS_Store
@@ -41,4 +42,4 @@ Thumbs.db
 # nothing needed here, docker-compose.yml itself should stay tracked
 
 # --- Logs ---
-*.loggeoip/*.mmdb
+*.log

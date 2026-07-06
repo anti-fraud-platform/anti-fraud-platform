@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"anti-fraud/internal/dbschema"
+
 	_ "github.com/lib/pq"
 )
 
@@ -36,25 +38,25 @@ type CampaignStats struct {
 
 // BlockedIPStat holds how many times a single IP was blocked.
 type BlockedIPStat struct {
-    IP            string `json:"ip"`
-    Count         int64  `json:"blocked"`          // backward compatible
-    TotalRequests int64  `json:"total_requests"`   // new
+	IP            string `json:"ip"`
+	Count         int64  `json:"blocked"`        // backward compatible
+	TotalRequests int64  `json:"total_requests"` // new
 }
 
 // StatsResponse is the full JSON response for /v1/analytics/stats.
 type StatsResponse struct {
-	TotalClicks   int64           `json:"total_clicks"`
-	AllowedCount  int64           `json:"allowed_count"`
-	BlockedCount  int64           `json:"blocked_count"`
-	BlockedBots   int64           `json:"blocked_bots"` // kept for backward compatibility with the existing frontend
-	SavedMoneyUSD float64         `json:"saved_money_usd"`
-	BudgetSaved   float64         `json:"budget_saved"` // blocked_count * costPerClickUSD
-	TopBlockedIPs []BlockedIPStat `json:"top_blocked_ips"`
-	Campaigns     []CampaignStats `json:"campaigns"`
-	PreviousTotalClicks   int64   `json:"previous_total_clicks"`
-    PreviousBlockedCount  int64   `json:"previous_blocked_count"`
-    TotalClicksDelta      float64 `json:"total_clicks_delta_percent"`
-    BlockedCountDelta     float64 `json:"blocked_count_delta_percent"`
+	TotalClicks          int64           `json:"total_clicks"`
+	AllowedCount         int64           `json:"allowed_count"`
+	BlockedCount         int64           `json:"blocked_count"`
+	BlockedBots          int64           `json:"blocked_bots"` // kept for backward compatibility with the existing frontend
+	SavedMoneyUSD        float64         `json:"saved_money_usd"`
+	BudgetSaved          float64         `json:"budget_saved"` // blocked_count * costPerClickUSD
+	TopBlockedIPs        []BlockedIPStat `json:"top_blocked_ips"`
+	Campaigns            []CampaignStats `json:"campaigns"`
+	PreviousTotalClicks  int64           `json:"previous_total_clicks"`
+	PreviousBlockedCount int64           `json:"previous_blocked_count"`
+	TotalClicksDelta     float64         `json:"total_clicks_delta_percent"`
+	BlockedCountDelta    float64         `json:"blocked_count_delta_percent"`
 
 	// ReasonBreakdown maps every distinct click_logs.reason value (blocked
 	// ones only) to its count, e.g. {"suspicious_agent": 12,
@@ -157,44 +159,44 @@ var jsChallengeReasons = []string{"no_js_challenge", "challenge_too_fast", "chal
 // and the top offending IPs. This is what the frontend reads on initial
 // page load, before the WebSocket stream takes over for live updates.
 func statsHandler(w http.ResponseWriter, r *http.Request) {
-    // Current totals
-    var totalClicks, blockedCount int64
-    if err := db.QueryRow("SELECT COUNT(*) FROM click_logs").Scan(&totalClicks); err != nil {
-        log.Printf("Error counting total clicks: %v", err)
-        http.Error(w, "Internal server error", http.StatusInternalServerError)
-        return
-    }
-    if err := db.QueryRow("SELECT COUNT(*) FROM click_logs WHERE is_bot = true").Scan(&blockedCount); err != nil {
-        log.Printf("Error counting blocked clicks: %v", err)
-        http.Error(w, "Internal server error", http.StatusInternalServerError)
-        return
-    }
-    allowedCount := totalClicks - blockedCount
+	// Current totals
+	var totalClicks, blockedCount int64
+	if err := db.QueryRow("SELECT COUNT(*) FROM click_logs").Scan(&totalClicks); err != nil {
+		log.Printf("Error counting total clicks: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	if err := db.QueryRow("SELECT COUNT(*) FROM click_logs WHERE is_bot = true").Scan(&blockedCount); err != nil {
+		log.Printf("Error counting blocked clicks: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	allowedCount := totalClicks - blockedCount
 
-    // Previous 7‑day period (14 to 7 days ago)
-    var prevTotal, prevBlocked int64
-    if err := db.QueryRow(`
+	// Previous 7‑day period (14 to 7 days ago)
+	var prevTotal, prevBlocked int64
+	if err := db.QueryRow(`
         SELECT COUNT(*), COUNT(*) FILTER (WHERE is_bot = true)
         FROM click_logs
         WHERE processed_at >= NOW() - INTERVAL '14 days'
           AND processed_at < NOW() - INTERVAL '7 days'
     `).Scan(&prevTotal, &prevBlocked); err != nil {
-        log.Printf("Error counting previous period: %v", err)
-        prevTotal, prevBlocked = 0, 0
-    }
+		log.Printf("Error counting previous period: %v", err)
+		prevTotal, prevBlocked = 0, 0
+	}
 
-    // Deltas
-    deltaTotal := 0.0
-    if prevTotal > 0 {
-        deltaTotal = float64(totalClicks-prevTotal) / float64(prevTotal) * 100
-    }
-    deltaBlocked := 0.0
-    if prevBlocked > 0 {
-        deltaBlocked = float64(blockedCount-prevBlocked) / float64(prevBlocked) * 100
-    }
+	// Deltas
+	deltaTotal := 0.0
+	if prevTotal > 0 {
+		deltaTotal = float64(totalClicks-prevTotal) / float64(prevTotal) * 100
+	}
+	deltaBlocked := 0.0
+	if prevBlocked > 0 {
+		deltaBlocked = float64(blockedCount-prevBlocked) / float64(prevBlocked) * 100
+	}
 
-    // Per‑campaign stats with custom cost per click (from campaigns table, default 5.00)
-    rows, err := db.Query(`
+	// Per‑campaign stats with custom cost per click (from campaigns table, default 5.00)
+	rows, err := db.Query(`
         SELECT 
             c.campaign_id,
             COALESCE(cam.cost_per_click, 5.00) as cpc,
@@ -205,31 +207,31 @@ func statsHandler(w http.ResponseWriter, r *http.Request) {
         GROUP BY c.campaign_id, cam.cost_per_click
         ORDER BY c.campaign_id
     `)
-    if err != nil {
-        log.Printf("Error querying campaign stats: %v", err)
-        http.Error(w, "Internal server error", http.StatusInternalServerError)
-        return
-    }
-    defer rows.Close()
+	if err != nil {
+		log.Printf("Error querying campaign stats: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
 
-    campaigns := []CampaignStats{}
-    for rows.Next() {
-        var campID string
-        var cpc, total, blocked int64
-        if err := rows.Scan(&campID, &cpc, &total, &blocked); err != nil {
-            log.Printf("Error scanning campaign stats: %v", err)
-            continue
-        }
-        campaigns = append(campaigns, CampaignStats{
-            CampaignID:    campID,
-            TotalClicks:   total,
-            BlockedBots:   blocked,
-            SavedMoneyUSD: float64(blocked) * float64(cpc),
-        })
-    }
+	campaigns := []CampaignStats{}
+	for rows.Next() {
+		var campID string
+		var cpc, total, blocked int64
+		if err := rows.Scan(&campID, &cpc, &total, &blocked); err != nil {
+			log.Printf("Error scanning campaign stats: %v", err)
+			continue
+		}
+		campaigns = append(campaigns, CampaignStats{
+			CampaignID:    campID,
+			TotalClicks:   total,
+			BlockedBots:   blocked,
+			SavedMoneyUSD: float64(blocked) * float64(cpc),
+		})
+	}
 
-    // Top blocked IPs – now with total requests
-    topRows, err := db.Query(`
+	// Top blocked IPs – now with total requests
+	topRows, err := db.Query(`
         SELECT ip,
                COUNT(*) as total_requests,
                COUNT(*) FILTER (WHERE is_bot = true) as blocked_count
@@ -239,78 +241,78 @@ func statsHandler(w http.ResponseWriter, r *http.Request) {
         ORDER BY blocked_count DESC
         LIMIT $1
     `, topBlockedIPsLimit)
-    if err != nil {
-        log.Printf("Error querying top blocked IPs: %v", err)
-        http.Error(w, "Internal server error", http.StatusInternalServerError)
-        return
-    }
-    defer topRows.Close()
+	if err != nil {
+		log.Printf("Error querying top blocked IPs: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	defer topRows.Close()
 
-    topBlockedIPs := []BlockedIPStat{}
-    for topRows.Next() {
-        var stat BlockedIPStat
-        if err := topRows.Scan(&stat.IP, &stat.TotalRequests, &stat.Count); err != nil {
-            log.Printf("Error scanning top blocked IP: %v", err)
-            continue
-        }
-        topBlockedIPs = append(topBlockedIPs, stat)
-    }
+	topBlockedIPs := []BlockedIPStat{}
+	for topRows.Next() {
+		var stat BlockedIPStat
+		if err := topRows.Scan(&stat.IP, &stat.TotalRequests, &stat.Count); err != nil {
+			log.Printf("Error scanning top blocked IP: %v", err)
+			continue
+		}
+		topBlockedIPs = append(topBlockedIPs, stat)
+	}
 
-    // Reason breakdown (unchanged)
-    reasonRows, err := db.Query(`
+	// Reason breakdown (unchanged)
+	reasonRows, err := db.Query(`
         SELECT reason, COUNT(*) as cnt
         FROM click_logs
         WHERE is_bot = true
         GROUP BY reason
     `)
-    if err != nil {
-        log.Printf("Error querying reason breakdown: %v", err)
-        http.Error(w, "Internal server error", http.StatusInternalServerError)
-        return
-    }
-    defer reasonRows.Close()
+	if err != nil {
+		log.Printf("Error querying reason breakdown: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	defer reasonRows.Close()
 
-    reasonBreakdown := map[string]int64{}
-    for reasonRows.Next() {
-        var reason string
-        var cnt int64
-        if err := reasonRows.Scan(&reason, &cnt); err != nil {
-            log.Printf("Error scanning reason breakdown row: %v", err)
-            continue
-        }
-        reasonBreakdown[reason] = cnt
-    }
+	reasonBreakdown := map[string]int64{}
+	for reasonRows.Next() {
+		var reason string
+		var cnt int64
+		if err := reasonRows.Scan(&reason, &cnt); err != nil {
+			log.Printf("Error scanning reason breakdown row: %v", err)
+			continue
+		}
+		reasonBreakdown[reason] = cnt
+	}
 
-    // Convenience fields for JS and header (unchanged)
-    var jsChallengeBlocked, headerHeuristicBlocked int64
-    jsChallengeReasons := []string{"no_js_challenge", "challenge_too_fast", "challenge_mismatch"}
-    for _, reason := range jsChallengeReasons {
-        jsChallengeBlocked += reasonBreakdown[reason]
-    }
-    headerHeuristicBlocked = reasonBreakdown["suspicious_headers"]
+	// Convenience fields for JS and header (unchanged)
+	var jsChallengeBlocked, headerHeuristicBlocked int64
+	jsChallengeReasons := []string{"no_js_challenge", "challenge_too_fast", "challenge_mismatch"}
+	for _, reason := range jsChallengeReasons {
+		jsChallengeBlocked += reasonBreakdown[reason]
+	}
+	headerHeuristicBlocked = reasonBreakdown["suspicious_headers"]
 
-    saved := float64(blockedCount) * 5.0 // fallback, will be overridden by per‑campaign sum? We keep this for compatibility.
+	saved := float64(blockedCount) * 5.0 // fallback, will be overridden by per‑campaign sum? We keep this for compatibility.
 
-    w.Header().Set("Content-Type", "application/json")
-    w.Header().Set("Access-Control-Allow-Origin", "*")
-    json.NewEncoder(w).Encode(StatsResponse{
-        TotalClicks:            totalClicks,
-        AllowedCount:           allowedCount,
-        BlockedCount:           blockedCount,
-        BlockedBots:            blockedCount,
-        SavedMoneyUSD:          saved,
-        BudgetSaved:            saved,
-        TopBlockedIPs:          topBlockedIPs,
-        Campaigns:              campaigns,
-        ReasonBreakdown:        reasonBreakdown,
-        JSChallengeBlocked:     jsChallengeBlocked,
-        HeaderHeuristicBlocked: headerHeuristicBlocked,
-        // New fields:
-        PreviousTotalClicks:   prevTotal,
-        PreviousBlockedCount:  prevBlocked,
-        TotalClicksDelta:      deltaTotal,
-        BlockedCountDelta:     deltaBlocked,
-    })
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	json.NewEncoder(w).Encode(StatsResponse{
+		TotalClicks:            totalClicks,
+		AllowedCount:           allowedCount,
+		BlockedCount:           blockedCount,
+		BlockedBots:            blockedCount,
+		SavedMoneyUSD:          saved,
+		BudgetSaved:            saved,
+		TopBlockedIPs:          topBlockedIPs,
+		Campaigns:              campaigns,
+		ReasonBreakdown:        reasonBreakdown,
+		JSChallengeBlocked:     jsChallengeBlocked,
+		HeaderHeuristicBlocked: headerHeuristicBlocked,
+		// New fields:
+		PreviousTotalClicks:  prevTotal,
+		PreviousBlockedCount: prevBlocked,
+		TotalClicksDelta:     deltaTotal,
+		BlockedCountDelta:    deltaBlocked,
+	})
 }
 
 // logsHandler returns raw click logs with pagination and filtering.
@@ -510,18 +512,18 @@ func blacklistSummaryHandler(w http.ResponseWriter, r *http.Request) {
 
 // trendHandler returns day-over-day aggregated traffic for the last 7 days.
 func trendHandler(w http.ResponseWriter, r *http.Request) {
-    type DailyTrend struct {
-        Date         string `json:"date"`
-        TotalClicks  int64  `json:"total_clicks"`
-        AllowedCount int64  `json:"allowed_count"`
-        BlockedCount int64  `json:"blocked_count"`
-    }
-    type DailyTrendWithBreakdown struct {
-        DailyTrend
-        Breakdown map[string]int64 `json:"breakdown"`
-    }
+	type DailyTrend struct {
+		Date         string `json:"date"`
+		TotalClicks  int64  `json:"total_clicks"`
+		AllowedCount int64  `json:"allowed_count"`
+		BlockedCount int64  `json:"blocked_count"`
+	}
+	type DailyTrendWithBreakdown struct {
+		DailyTrend
+		Breakdown map[string]int64 `json:"breakdown"`
+	}
 
-    rows, err := db.Query(`
+	rows, err := db.Query(`
         SELECT 
             TO_CHAR(processed_at, 'YYYY-MM-DD') as log_date,
             COUNT(*) as total,
@@ -532,69 +534,70 @@ func trendHandler(w http.ResponseWriter, r *http.Request) {
         GROUP BY log_date
         ORDER BY log_date ASC
     `)
-    if err != nil {
-        log.Printf("Error querying trend: %v", err)
-        http.Error(w, "Internal server error", http.StatusInternalServerError)
-        return
-    }
-    defer rows.Close()
+	if err != nil {
+		log.Printf("Error querying trend: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
 
-    type SimpleTrend struct {
-        Date    string
-        Total   int64
-        Allowed int64
-        Blocked int64
-    }
-    var trends []SimpleTrend
-    for rows.Next() {
-        var t SimpleTrend
-        if err := rows.Scan(&t.Date, &t.Total, &t.Allowed, &t.Blocked); err != nil {
-            log.Printf("Error scanning trend row: %v", err)
-            continue
-        }
-        trends = append(trends, t)
-    }
+	type SimpleTrend struct {
+		Date    string
+		Total   int64
+		Allowed int64
+		Blocked int64
+	}
+	var trends []SimpleTrend
+	for rows.Next() {
+		var t SimpleTrend
+		if err := rows.Scan(&t.Date, &t.Total, &t.Allowed, &t.Blocked); err != nil {
+			log.Printf("Error scanning trend row: %v", err)
+			continue
+		}
+		trends = append(trends, t)
+	}
 
-    result := make([]DailyTrendWithBreakdown, 0, len(trends))
-    for _, t := range trends {
-        breakdownRows, err := db.Query(`
+	result := make([]DailyTrendWithBreakdown, 0, len(trends))
+	for _, t := range trends {
+		breakdownRows, err := db.Query(`
             SELECT reason, COUNT(*) as cnt
             FROM click_logs
             WHERE TO_CHAR(processed_at, 'YYYY-MM-DD') = $1 AND is_bot = true
             GROUP BY reason
         `, t.Date)
-        if err != nil {
-            log.Printf("Error querying breakdown for %s: %v", t.Date, err)
-            continue
-        }
+		if err != nil {
+			log.Printf("Error querying breakdown for %s: %v", t.Date, err)
+			continue
+		}
 
-        breakdown := map[string]int64{}
-        for breakdownRows.Next() {
-            var reason string
-            var cnt int64
-            if err := breakdownRows.Scan(&reason, &cnt); err != nil {
-                log.Printf("Error scanning breakdown row: %v", err)
-                continue
-            }
-            breakdown[reason] = cnt
-        }
-        breakdownRows.Close()
+		breakdown := map[string]int64{}
+		for breakdownRows.Next() {
+			var reason string
+			var cnt int64
+			if err := breakdownRows.Scan(&reason, &cnt); err != nil {
+				log.Printf("Error scanning breakdown row: %v", err)
+				continue
+			}
+			breakdown[reason] = cnt
+		}
+		breakdownRows.Close()
 
-        result = append(result, DailyTrendWithBreakdown{
-            DailyTrend: DailyTrend{
-                Date:         t.Date,
-                TotalClicks:  t.Total,
-                AllowedCount: t.Allowed,
-                BlockedCount: t.Blocked,
-            },
-            Breakdown: breakdown,
-        })
-    }
+		result = append(result, DailyTrendWithBreakdown{
+			DailyTrend: DailyTrend{
+				Date:         t.Date,
+				TotalClicks:  t.Total,
+				AllowedCount: t.Allowed,
+				BlockedCount: t.Blocked,
+			},
+			Breakdown: breakdown,
+		})
+	}
 
-    w.Header().Set("Content-Type", "application/json")
-    w.Header().Set("Access-Control-Allow-Origin", "*")
-    json.NewEncoder(w).Encode(map[string]interface{}{"data": result})
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	json.NewEncoder(w).Encode(map[string]interface{}{"data": result})
 }
+
 // auditEventsHandler returns the latest system events for the recent activity feed.
 func auditEventsHandler(w http.ResponseWriter, r *http.Request) {
 	rows, err := db.Query("SELECT id, action_text, created_at FROM audit_events ORDER BY created_at DESC LIMIT 20")
@@ -711,6 +714,11 @@ func main() {
 	}
 	log.Println("Connected to PostgreSQL")
 
+	if err = dbschema.Apply(db); err != nil {
+		log.Fatal("Schema migration failed:", err)
+	}
+	log.Println("PostgreSQL schema is up to date")
+
 	http.HandleFunc("/v1/analytics/stats", statsHandler)
 	http.HandleFunc("/v1/analytics/logs", logsHandler)
 	http.HandleFunc("/v1/analytics/blacklist/summary", blacklistSummaryHandler)
@@ -722,14 +730,15 @@ func main() {
 	log.Printf("Analytics service listening on :%s", port)
 	log.Fatal(http.ListenAndServe(":"+port, nil))
 }
+
 // healthHandler returns PostgreSQL health status.
 func healthHandler(w http.ResponseWriter, r *http.Request) {
-    status := map[string]interface{}{}
-    if err := db.Ping(); err != nil {
-        status["postgres"] = "unhealthy"
-    } else {
-        status["postgres"] = "healthy"
-    }
-    w.Header().Set("Content-Type", "application/json")
-    json.NewEncoder(w).Encode(status)
+	status := map[string]interface{}{}
+	if err := db.Ping(); err != nil {
+		status["postgres"] = "unhealthy"
+	} else {
+		status["postgres"] = "healthy"
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(status)
 }

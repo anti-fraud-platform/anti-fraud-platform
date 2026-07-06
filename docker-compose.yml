@@ -20,6 +20,10 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       BLACKLIST_PATH: /app/data/dirty_ips.txt
+      GEOIP_DB_PATH: /usr/share/GeoIP/GeoLite2-Country.mmdb
+      GEOIP_COUNTRY_DB_PATH: /usr/share/GeoIP/GeoLite2-Country.mmdb
+      GEOIP_CITY_DB_PATH: /usr/share/GeoIP/GeoLite2-City.mmdb
+      GEOIP_ASN_DB_PATH: /usr/share/GeoIP/GeoLite2-ASN.mmdb
       REQUIRE_JS_CHALLENGE: "true"
       REQUIRE_HEADER_CHECK: "true"
 
@@ -27,7 +31,7 @@ services:
       - "8080"
     volumes:
       - ./deployments/blacklists/dirty_ips.txt:/app/data/dirty_ips.txt:ro
-      - ./geoip/GeoLite2-Country.mmdb:/usr/share/GeoIP/GeoLite2-Country.mmdb:ro
+      - ./geoip:/usr/share/GeoIP:ro
 
     depends_on:
       postgres:
@@ -51,7 +55,6 @@ services:
     networks:
       - antifraud-net
     restart: unless-stopped
-   
 
   analytics:
     build:
@@ -88,8 +91,8 @@ services:
     container_name: antifraud-frontend
     environment:
       FRONTEND_PORT: "3000"
-      ANALYTICS_BASE_URL: http://analytics:8081
-      ENGINE_BASE_URL: http://engine:8080
+      ANALYTICS_UPSTREAM: analytics:8081
+      ENGINE_UPSTREAM: engine:8080
     ports:
       - "3001:80"
     depends_on:

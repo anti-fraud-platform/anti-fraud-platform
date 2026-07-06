@@ -9,6 +9,9 @@ CREATE TABLE IF NOT EXISTS click_logs (
     reason VARCHAR(100),
     processed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     country VARCHAR(64),
+    city VARCHAR(128),
+    asn_number BIGINT,
+    asn_org TEXT,
     risk_score DOUBLE PRECISION DEFAULT 0,
     risk_reasons TEXT
 );
@@ -16,6 +19,9 @@ CREATE TABLE IF NOT EXISTS click_logs (
 ALTER TABLE click_logs
     ADD COLUMN IF NOT EXISTS campaign_id VARCHAR(128) NOT NULL DEFAULT 'unknown',
     ADD COLUMN IF NOT EXISTS country VARCHAR(64),
+    ADD COLUMN IF NOT EXISTS city VARCHAR(128),
+    ADD COLUMN IF NOT EXISTS asn_number BIGINT,
+    ADD COLUMN IF NOT EXISTS asn_org TEXT,
     ADD COLUMN IF NOT EXISTS risk_score DOUBLE PRECISION DEFAULT 0,
     ADD COLUMN IF NOT EXISTS risk_reasons TEXT,
     ALTER COLUMN is_bot SET DEFAULT FALSE,
@@ -38,6 +44,12 @@ CREATE INDEX IF NOT EXISTS idx_click_logs_risk_score
 
 CREATE INDEX IF NOT EXISTS idx_click_logs_country
     ON click_logs (country);
+
+CREATE INDEX IF NOT EXISTS idx_click_logs_city
+    ON click_logs (city);
+
+CREATE INDEX IF NOT EXISTS idx_click_logs_asn_number
+    ON click_logs (asn_number);
 
 
 CREATE TABLE IF NOT EXISTS audit_events (

@@ -1,0 +1,6 @@
+FROM nginx:1.27-alpine
+
+COPY deployments/nginx/engine.railway.conf.template /etc/nginx/templates/default.conf.template
+COPY deployments/nginx/html /usr/share/nginx/html
+
+EXPOSE 80
