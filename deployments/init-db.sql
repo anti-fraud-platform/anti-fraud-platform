@@ -34,4 +34,23 @@ CREATE TABLE IF NOT EXISTS audit_events (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- campaign cost table, dynamic blacklist, extra log columns
+
+CREATE TABLE IF NOT EXISTS campaigns (
+    campaign_id VARCHAR(128) PRIMARY KEY,
+    cost_per_click DECIMAL(10,2) NOT NULL DEFAULT 5.00
+);
+
+ALTER TABLE click_logs
+    ADD COLUMN IF NOT EXISTS country CHAR(2),
+    ADD COLUMN IF NOT EXISTS risk_score INT,
+    ADD COLUMN IF NOT EXISTS risk_reasons TEXT;
+
+CREATE TABLE IF NOT EXISTS dynamic_blacklist (
+    ip VARCHAR(45) PRIMARY KEY,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    reason TEXT,
+    expires_at TIMESTAMPTZ
+);
+
 COMMIT;

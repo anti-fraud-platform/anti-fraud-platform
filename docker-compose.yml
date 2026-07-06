@@ -29,6 +29,8 @@ services:
       - "8080"
     volumes:
       - ./deployments/blacklists/dirty_ips.txt:/app/data/dirty_ips.txt:ro
+      #- ./geoip/GeoLite2-Country.mmdb:/usr/share/GeoIP/GeoLite2-Country.mmdb:ro
+
     depends_on:
       postgres:
         condition: service_healthy
