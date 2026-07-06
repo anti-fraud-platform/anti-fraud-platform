@@ -90,6 +90,7 @@ services:
       dockerfile: frontend/Dockerfile
     container_name: antifraud-frontend
     environment:
+      PORT: "80"
       FRONTEND_PORT: "3000"
       ANALYTICS_UPSTREAM: analytics:8081
       ENGINE_UPSTREAM: engine:8080
