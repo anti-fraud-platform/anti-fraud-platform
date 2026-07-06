@@ -5,16 +5,14 @@ server {
     root /usr/share/nginx/html;
     index index.html;
 
-    # фронт ходит в /api, nginx внутри compose кидает это в analytics
     location /api/ {
-        proxy_pass http://analytics:8081/;
+        proxy_pass http://${ANALYTICS_UPSTREAM}/;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
     }
 
-    # на будущее, если захотим дергать engine через тот же frontend nginx
     location /engine/ {
-        proxy_pass http://engine:8080/;
+        proxy_pass http://${ENGINE_UPSTREAM}/;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
     }

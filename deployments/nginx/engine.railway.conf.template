@@ -1,0 +1,40 @@
+server {
+    listen 80;
+    server_name _;
+
+    location = / {
+        root /usr/share/nginx/html;
+        try_files /index.html =404;
+    }
+
+    location /health {
+        proxy_pass http://${ENGINE_UPSTREAM}/health;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+
+    location /v1/challenge {
+        proxy_pass http://${ENGINE_UPSTREAM}/v1/challenge;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+
+    location /click {
+        proxy_pass http://${ENGINE_UPSTREAM}/v1/click;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+
+    location /bot/click {
+        proxy_pass http://${ENGINE_UPSTREAM}/v1/click;
+        proxy_method POST;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header User-Agent "python-requests/2.28 (automated testing signature)";
+        proxy_set_header X-Click-Source "automated";
+    }
+}

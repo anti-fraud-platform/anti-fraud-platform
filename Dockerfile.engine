@@ -16,9 +16,11 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o /bin/engine ./cmd/engine
 
 FROM alpine:3.21
 
-
 RUN adduser -D -H appuser
+RUN mkdir -p /app/data
 COPY --from=build /bin/engine /usr/local/bin/engine
+COPY deployments/blacklists/dirty_ips.txt /app/data/dirty_ips.txt
+RUN chown -R appuser:appuser /app
 USER appuser
 
 EXPOSE 8080
