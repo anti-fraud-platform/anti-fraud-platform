@@ -102,6 +102,7 @@ ENGINE_UPSTREAM=engine.railway.internal:8080
 ```
 
 Generate a public domain for this service. This is the main public entrypoint.
+Railway injects `PORT` automatically for public services. Do not hardcode it to `80`.
 
 ## 6. Optional simulator service
 
