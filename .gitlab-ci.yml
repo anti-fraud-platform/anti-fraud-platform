@@ -34,6 +34,11 @@ frontend:
   script:
     - npm run lint
     - npm run build
+  artifacts:
+    when: always
+    expire_in: 7 days
+    paths:
+      - frontend/dist/
 
 docker-build:
   stage: build
@@ -69,6 +74,7 @@ deploy_vm:
       git checkout main &&
       git pull --ff-only origin main &&
       docker-compose up --build -d &&
+      docker-compose restart nginx_engine &&
       docker-compose ps"
   needs:
     - backend

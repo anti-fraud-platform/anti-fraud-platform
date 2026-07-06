@@ -10,11 +10,12 @@ import (
 	"net/http"
 	"os"
 	"strconv"
-    "sync"
+	"sync"
 	"time"
 
 	"anti-fraud/internal/bloom"
 	"anti-fraud/internal/challenge"
+	"anti-fraud/internal/dbschema"
 	"anti-fraud/internal/headercheck"
 	"anti-fraud/internal/logger"
 
@@ -22,8 +23,8 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"crypto/sha256"
-    "encoding/hex"
-    "strings"
+	"encoding/hex"
+	"strings"
 )
 
 type ClickPayload struct {
@@ -43,7 +44,7 @@ var (
 	challengeStore challenge.Store
 	ctx            = context.Background()
 	maxRate        = 5
-    bgTasks        sync.WaitGroup
+	bgTasks        sync.WaitGroup
 
 	// requireChallenge / requireHeaderCheck are package-level (not const)
 	// specifically so existing tests that POST directly to /v1/click
@@ -51,35 +52,36 @@ var (
 	// TestMain or per-test, instead of needing to solve a challenge in
 	// every single existing test case. Production defaults to true for
 	// both — see loadFeatureToggles().
-	requireChallenge  = true
+	requireChallenge   = true
 	requireHeaderCheck = true
 	// Tier 2: risk threshold and dynamic blacklist settings
-    riskThreshold = 3                // score >= this => blocked as "risk_score_exceeded"
-    dynBlacklistThreshold = 5        // 5+ flagged hits in window
-    dynBlacklistWindow = time.Hour   // rolling window for auto-promotion
-    dynBlacklistSetKey = "af:dynamic_blacklist"  // Redis set of permanently blocked IPs
-    rateKeyPrefix = "rate:fp:"       // new prefix for fingerprint-based rate limiting
+	riskThreshold         = 3                      // score >= this => blocked as "risk_score_exceeded"
+	dynBlacklistThreshold = 5                      // 5+ flagged hits in window
+	dynBlacklistWindow    = time.Hour              // rolling window for auto-promotion
+	dynBlacklistSetKey    = "af:dynamic_blacklist" // Redis set of permanently blocked IPs
+	rateKeyPrefix         = "rate:fp:"             // new prefix for fingerprint-based rate limiting
 )
+
 // healthHandler returns the health status of Redis and PostgreSQL.
 func healthHandler(w http.ResponseWriter, r *http.Request) {
-    status := map[string]interface{}{}
-    // Redis
-    if err := rdb.Ping(ctx).Err(); err != nil {
-        status["redis"] = "unhealthy"
-    } else {
-        status["redis"] = "healthy"
-    }
-    // PostgreSQL
-    if err := db.Ping(); err != nil {
-        status["postgres"] = "unhealthy"
-    } else {
-        status["postgres"] = "healthy"
-    }
-    // Bloom filter loaded?
-    status["blacklist_loaded"] = ipFilter != nil
+	status := map[string]interface{}{}
+	// Redis
+	if err := rdb.Ping(ctx).Err(); err != nil {
+		status["redis"] = "unhealthy"
+	} else {
+		status["redis"] = "healthy"
+	}
+	// PostgreSQL
+	if err := db.Ping(); err != nil {
+		status["postgres"] = "unhealthy"
+	} else {
+		status["postgres"] = "healthy"
+	}
+	// Bloom filter loaded?
+	status["blacklist_loaded"] = ipFilter != nil
 
-    w.Header().Set("Content-Type", "application/json")
-    json.NewEncoder(w).Encode(status)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(status)
 }
 
 func main() {
@@ -121,6 +123,11 @@ func main() {
 		log.Fatalf("Failed to connect to PostgreSQL: %v", err)
 	}
 	log.Println("Successfully connected to PostgreSQL storage")
+
+	if err := dbschema.Apply(db); err != nil {
+		log.Fatalf("Failed to apply PostgreSQL schema: %v", err)
+	}
+	log.Println("PostgreSQL schema is up to date")
 
 	blacklistPath := getEnv("BLACKLIST_PATH", "./deployments/blacklists/dirty_ips.txt")
 	ipFilter, err = bloom.NewIPFilter(blacklistPath)
@@ -204,173 +211,172 @@ func handleChallenge(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleClick(w http.ResponseWriter, r *http.Request) {
-    if r.Method != http.MethodPost {
-        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-        return
-    }
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 
-    ip := getClientIP(r)
-    ua := r.UserAgent()
+	ip := getClientIP(r)
+	ua := r.UserAgent()
 
-    var payload ClickPayload
-    campaignID := "unknown"
-    if err := json.NewDecoder(r.Body).Decode(&payload); err == nil {
-        if payload.CampaignID != "" {
-            campaignID = payload.CampaignID
-        }
-        if payload.UserAgent != "" {
-            ua = payload.UserAgent
-        }
-    }
+	var payload ClickPayload
+	campaignID := "unknown"
+	if err := json.NewDecoder(r.Body).Decode(&payload); err == nil {
+		if payload.CampaignID != "" {
+			campaignID = payload.CampaignID
+		}
+		if payload.UserAgent != "" {
+			ua = payload.UserAgent
+		}
+	}
 
-    w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Type", "application/json")
 
-    // ---------- Hard checks (immediate blocking) ----------
+	// ---------- Hard checks (immediate blocking) ----------
 
-    // 1) Dynamic blacklist (Tier 2)
-    if isDynamicBlacklisted(ip) {
-        if batchLogger != nil {
-            batchLogger.LogAsync(logger.ClickLog{
-                IP:         ip,
-                CampaignID: campaignID,
-                UserAgent:  ua,
-                IsBot:      true,
-                Reason:     "dynamic_blacklist",
-            })
-        }
-        w.WriteHeader(http.StatusForbidden)
-        json.NewEncoder(w).Encode(map[string]string{"error": "Blocked by dynamic blacklist."})
-        return
-    }
+	// 1) Dynamic blacklist (Tier 2)
+	if isDynamicBlacklisted(ip) {
+		if batchLogger != nil {
+			batchLogger.LogAsync(logger.ClickLog{
+				IP:         ip,
+				CampaignID: campaignID,
+				UserAgent:  ua,
+				IsBot:      true,
+				Reason:     "dynamic_blacklist",
+			})
+		}
+		w.WriteHeader(http.StatusForbidden)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Blocked by dynamic blacklist."})
+		return
+	}
 
-    // 2) Static blacklist (Bloom filter)
-    if ipFilter != nil && ipFilter.IsBlacklisted(ip) {
-        if batchLogger != nil {
-            batchLogger.LogAsync(logger.ClickLog{
-                IP:         ip,
-                CampaignID: campaignID,
-                UserAgent:  ua,
-                IsBot:      true,
-                Reason:     "static_blacklist",
-            })
-        }
-        w.WriteHeader(http.StatusForbidden)
-        json.NewEncoder(w).Encode(map[string]string{"error": "Blocked by static blacklist."})
-        return
-    }
+	// 2) Static blacklist (Bloom filter)
+	if ipFilter != nil && ipFilter.IsBlacklisted(ip) {
+		if batchLogger != nil {
+			batchLogger.LogAsync(logger.ClickLog{
+				IP:         ip,
+				CampaignID: campaignID,
+				UserAgent:  ua,
+				IsBot:      true,
+				Reason:     "static_blacklist",
+			})
+		}
+		w.WriteHeader(http.StatusForbidden)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Blocked by static blacklist."})
+		return
+	}
 
-    // 3) Rate limiter – now fingerprint-based (IP + UA + headers)
-    fp := fingerprint(r)
-    key := fmt.Sprintf("%s%s", rateKeyPrefix, fp)
-    currentRequests, err := rdb.Incr(ctx, key).Result()
-    if err != nil {
-        log.Printf("Redis error: %v", err)
-    } else {
-        if _, expErr := rdb.ExpireNX(ctx, key, time.Second).Result(); expErr != nil {
-            log.Printf("Redis ExpireNX error: %v", expErr)
-        }
-        if int(currentRequests) > maxRate {
-            if batchLogger != nil {
-                batchLogger.LogAsync(logger.ClickLog{
-                    IP:         ip,
-                    CampaignID: campaignID,
-                    UserAgent:  ua,
-                    IsBot:      true,
-                    Reason:     "rate_limit_exceeded",
-                })
-            }
-            w.WriteHeader(http.StatusTooManyRequests)
-            json.NewEncoder(w).Encode(map[string]string{"error": "Too many requests. Real-time anti-fraud trigger."})
-            return
-        }
-    }
+	// 3) Rate limiter – now fingerprint-based (IP + UA + headers)
+	fp := fingerprint(r)
+	key := fmt.Sprintf("%s%s", rateKeyPrefix, fp)
+	currentRequests, err := rdb.Incr(ctx, key).Result()
+	if err != nil {
+		log.Printf("Redis error: %v", err)
+	} else {
+		if _, expErr := rdb.ExpireNX(ctx, key, time.Second).Result(); expErr != nil {
+			log.Printf("Redis ExpireNX error: %v", expErr)
+		}
+		if int(currentRequests) > maxRate {
+			if batchLogger != nil {
+				batchLogger.LogAsync(logger.ClickLog{
+					IP:         ip,
+					CampaignID: campaignID,
+					UserAgent:  ua,
+					IsBot:      true,
+					Reason:     "rate_limit_exceeded",
+				})
+			}
+			w.WriteHeader(http.StatusTooManyRequests)
+			json.NewEncoder(w).Encode(map[string]string{"error": "Too many requests. Real-time anti-fraud trigger."})
+			return
+		}
+	}
 
-        // ---------- Soft checks (accumulate risk score) ----------
+	// ---------- Soft checks (accumulate risk score) ----------
 
-    riskScore := 0
-    riskReasons := []string{}
-    clickSource := r.Header.Get("X-Click-Source")
+	riskScore := 0
+	riskReasons := []string{}
+	clickSource := r.Header.Get("X-Click-Source")
 
-    // a) User-Agent check
-    if clickSource == "automated" || isSuspiciousUserAgent(ua) {
-        riskScore += 2
-        riskReasons = append(riskReasons, "suspicious_agent")
-    }
+	// a) User-Agent check
+	if clickSource == "automated" || isSuspiciousUserAgent(ua) {
+		riskScore += 2
+		riskReasons = append(riskReasons, "suspicious_agent")
+	}
 
-    // b) JS challenge
-    if requireChallenge {
-        if err := challenge.Validate(r.Context(), challengeStore, payload.ChallengeID, payload.ChallengeToken); err != nil {
-            switch err {
-            case challenge.ErrNotFound:
-                riskScore += 3
-                riskReasons = append(riskReasons, "no_js_challenge")
-            case challenge.ErrTooFast:
-                riskScore += 3
-                riskReasons = append(riskReasons, "challenge_too_fast")
-            case challenge.ErrMismatch:
-                riskScore += 3
-                riskReasons = append(riskReasons, "challenge_mismatch")
-            }
-        }
-    }
+	// b) JS challenge
+	if requireChallenge {
+		if err := challenge.Validate(r.Context(), challengeStore, payload.ChallengeID, payload.ChallengeToken); err != nil {
+			switch err {
+			case challenge.ErrNotFound:
+				riskScore += 3
+				riskReasons = append(riskReasons, "no_js_challenge")
+			case challenge.ErrTooFast:
+				riskScore += 3
+				riskReasons = append(riskReasons, "challenge_too_fast")
+			case challenge.ErrMismatch:
+				riskScore += 3
+				riskReasons = append(riskReasons, "challenge_mismatch")
+			}
+		}
+	}
 
-    // c) Header heuristic
-    if requireHeaderCheck {
-        hc := headercheck.Score(r)
-        if hc.IsSuspicious() {
-            riskScore += 2
-            riskReasons = append(riskReasons, "suspicious_headers")
-        }
-    }
+	// c) Header heuristic
+	if requireHeaderCheck {
+		hc := headercheck.Score(r)
+		if hc.IsSuspicious() {
+			riskScore += 2
+			riskReasons = append(riskReasons, "suspicious_headers")
+		}
+	}
 
-    // ---------- Final decision based on risk score ----------
+	// ---------- Final decision based on risk score ----------
 
-    finalReason := "allowed"
-    isBot := false
-    if riskScore >= riskThreshold {
-        isBot = true
-        // If only one check fired, use that specific reason for better analytics breakdown.
-        if len(riskReasons) == 1 {
-            finalReason = riskReasons[0]
-        } else {
-            finalReason = "risk_score_exceeded"
-        }
-        // Asynchronously increment dynamic blacklist counter for this IP
-        bgTasks.Add(1)
-        go func(ip string) {
-            defer bgTasks.Done()
-            incrementDynamicBlacklistCounter(ip)
-        }(ip)
-    }
+	finalReason := "allowed"
+	isBot := false
+	if riskScore >= riskThreshold {
+		isBot = true
+		// If only one check fired, use that specific reason for better analytics breakdown.
+		if len(riskReasons) == 1 {
+			finalReason = riskReasons[0]
+		} else {
+			finalReason = "risk_score_exceeded"
+		}
+		// Asynchronously increment dynamic blacklist counter for this IP
+		bgTasks.Add(1)
+		go func(ip string) {
+			defer bgTasks.Done()
+			incrementDynamicBlacklistCounter(ip)
+		}(ip)
+	}
 
+	// ---------- Log the click ----------
+	if batchLogger != nil {
+		batchLogger.LogAsync(logger.ClickLog{
+			IP:          ip,
+			CampaignID:  campaignID,
+			UserAgent:   ua,
+			IsBot:       isBot,
+			Reason:      finalReason,
+			RiskScore:   riskScore,
+			RiskReasons: strings.Join(riskReasons, ","),
+		})
+	}
 
-    // ---------- Log the click ----------
-    if batchLogger != nil {
-        batchLogger.LogAsync(logger.ClickLog{
-            IP:          ip,
-            CampaignID:  campaignID,
-            UserAgent:   ua,
-            IsBot:       isBot,
-            Reason:      finalReason,
-            RiskScore:   riskScore,
-            RiskReasons: strings.Join(riskReasons, ","),
-        })
-    }
-
-    // ---------- Response ----------
-    if isBot {
-        w.WriteHeader(http.StatusOK)
-        json.NewEncoder(w).Encode(map[string]string{
-            "status":  "flagged",
-            "message": "Click accepted for validation analysis pipeline",
-        })
-    } else {
-        w.WriteHeader(http.StatusOK)
-        json.NewEncoder(w).Encode(map[string]string{
-            "status":  "success",
-            "message": "Click registered, routing to verification queue",
-        })
-    }
+	// ---------- Response ----------
+	if isBot {
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]string{
+			"status":  "flagged",
+			"message": "Click accepted for validation analysis pipeline",
+		})
+	} else {
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]string{
+			"status":  "success",
+			"message": "Click registered, routing to verification queue",
+		})
+	}
 }
 
 func getEnv(key, fallback string) string {
@@ -399,64 +405,65 @@ func getClientIP(r *http.Request) string {
 // This prevents IP rotation attacks – a bot that changes IP but keeps the same UA/headers
 // will still be rate-limited.
 func fingerprint(r *http.Request) string {
-    ip := getClientIP(r)
-    ua := r.UserAgent()
-    acceptLang := r.Header.Get("Accept-Language")
-    acceptEnc := r.Header.Get("Accept-Encoding")
-    raw := strings.Join([]string{ip, ua, acceptLang, acceptEnc}, "|")
-    hash := sha256.Sum256([]byte(raw))
-    return hex.EncodeToString(hash[:])
+	ip := getClientIP(r)
+	ua := r.UserAgent()
+	acceptLang := r.Header.Get("Accept-Language")
+	acceptEnc := r.Header.Get("Accept-Encoding")
+	raw := strings.Join([]string{ip, ua, acceptLang, acceptEnc}, "|")
+	hash := sha256.Sum256([]byte(raw))
+	return hex.EncodeToString(hash[:])
 }
 
 // isDynamicBlacklisted checks if IP is in the dynamic blacklist (Redis set).
 func isDynamicBlacklisted(ip string) bool {
-    ok, err := rdb.SIsMember(ctx, dynBlacklistSetKey, ip).Result()
-    if err != nil {
-        log.Printf("Redis SIsMember error: %v", err)
-        return false
-    }
-    return ok
+	ok, err := rdb.SIsMember(ctx, dynBlacklistSetKey, ip).Result()
+	if err != nil {
+		log.Printf("Redis SIsMember error: %v", err)
+		return false
+	}
+	return ok
 }
 
 // promoteToDynamicBlacklist adds an IP to the persistent dynamic blacklist.
 func promoteToDynamicBlacklist(ip string, client *redis.Client) {
-    if client == nil {
-        return
-    }
-    if err := client.SAdd(ctx, dynBlacklistSetKey, ip).Err(); err != nil {
-        log.Printf("Failed to add IP to dynamic blacklist: %v", err)
-        return
-    }
-    log.Printf("IP %s promoted to dynamic blacklist", ip)
+	if client == nil {
+		return
+	}
+	if err := client.SAdd(ctx, dynBlacklistSetKey, ip).Err(); err != nil {
+		log.Printf("Failed to add IP to dynamic blacklist: %v", err)
+		return
+	}
+	log.Printf("IP %s promoted to dynamic blacklist", ip)
 }
+
 // incrementDynamicBlacklistCounter increments a per-IP counter and promotes if threshold is reached.
 // Called asynchronously after a flagged (risk-scored) request.
 func incrementDynamicBlacklistCounter(ip string) {
-    // Copy globals to locals to avoid data race with test cleanup.
-    rdbLocal := rdb
-    ctxLocal := ctx
-    threshold := dynBlacklistThreshold
+	// Copy globals to locals to avoid data race with test cleanup.
+	rdbLocal := rdb
+	ctxLocal := ctx
+	threshold := dynBlacklistThreshold
 
-    if rdbLocal == nil || threshold > 100 {
-        return
-    }
-    defer func() {
-        if r := recover(); r != nil {
-            log.Printf("Recovered in incrementDynamicBlacklistCounter: %v", r)
-        }
-    }()
+	if rdbLocal == nil || threshold > 100 {
+		return
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("Recovered in incrementDynamicBlacklistCounter: %v", r)
+		}
+	}()
 
-    counterKey := fmt.Sprintf("af:dynbl:cnt:%s", ip)
-    count, err := rdbLocal.Incr(ctxLocal, counterKey).Result()
-    if err != nil {
-        log.Printf("Error incrementing dynamic blacklist counter: %v", err)
-        return
-    }
-    if count == 1 {
-        rdbLocal.Expire(ctxLocal, counterKey, dynBlacklistWindow)
-    }
-    if count >= int64(threshold) {
-        promoteToDynamicBlacklist(ip, rdbLocal)
-        rdbLocal.Del(ctxLocal, counterKey)
-    }
+	counterKey := fmt.Sprintf("af:dynbl:cnt:%s", ip)
+	count, err := rdbLocal.Incr(ctxLocal, counterKey).Result()
+	if err != nil {
+		log.Printf("Error incrementing dynamic blacklist counter: %v", err)
+		return
+	}
+	if count == 1 {
+		rdbLocal.Expire(ctxLocal, counterKey, dynBlacklistWindow)
+	}
+	if count >= int64(threshold) {
+		promoteToDynamicBlacklist(ip, rdbLocal)
+		rdbLocal.Del(ctxLocal, counterKey)
+	}
 }

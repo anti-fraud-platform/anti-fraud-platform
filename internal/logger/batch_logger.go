@@ -5,47 +5,50 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"net"
 	"strings"
 	"time"
-	"net"
-    "github.com/oschwald/geoip2-golang"
+
+	"anti-fraud/internal/geoiputil"
 )
 
 type ClickLog struct {
-    IP          string
-    CampaignID  string
-    UserAgent   string
-    IsBot       bool
-    Reason      string
-    Country     string   // Tier 2
-    RiskScore   int      // Tier 2
-    RiskReasons string   // Tier 2 (comma-separated)
+	IP          string
+	CampaignID  string
+	UserAgent   string
+	IsBot       bool
+	Reason      string
+	Country     string
+	City        string
+	ASNNumber   uint
+	ASNOrg      string
+	RiskScore   int
+	RiskReasons string
 }
 
 type BatchLogger struct {
-    db            *sql.DB
-    logChan       chan ClickLog
-    batchSize     int
-    flushInterval time.Duration
-    geoReader     *geoip2.Reader   // Tier 2
+	db            *sql.DB
+	logChan       chan ClickLog
+	batchSize     int
+	flushInterval time.Duration
+	geoResolver   *geoiputil.Resolver
 }
 
 func NewBatchLogger(db *sql.DB, batchSize int, flushIntervalMs int) *BatchLogger {
-    bl := &BatchLogger{
-        db:            db,
-        logChan:       make(chan ClickLog, batchSize*2),
-        batchSize:     batchSize,
-        flushInterval: time.Duration(flushIntervalMs) * time.Millisecond,
-    }
+	bl := &BatchLogger{
+		db:            db,
+		logChan:       make(chan ClickLog, batchSize*2),
+		batchSize:     batchSize,
+		flushInterval: time.Duration(flushIntervalMs) * time.Millisecond,
+	}
 
-    // Tier 2: load GeoIP database (adjust path as needed)
-    if reader, err := geoip2.Open("/usr/share/GeoIP/GeoLite2-Country.mmdb"); err != nil {
-        log.Printf("Warning: GeoIP database not loaded: %v", err)
-    } else {
-        bl.geoReader = reader
-    }
+	resolver, errs := geoiputil.OpenBestEffort(geoiputil.PathsFromEnv())
+	for _, err := range errs {
+		log.Printf("Warning: GeoIP database not loaded: %v", err)
+	}
+	bl.geoResolver = resolver
 
-    return bl
+	return bl
 }
 
 func (bl *BatchLogger) LogAsync(entry ClickLog) {
@@ -88,52 +91,69 @@ func (bl *BatchLogger) Start(ctx context.Context) {
 }
 
 func (bl *BatchLogger) flush(batch []ClickLog) {
-    if len(batch) == 0 {
-        return
-    }
+	if len(batch) == 0 {
+		return
+	}
 
-    // Now we have 8 fields: ip, campaign_id, user_agent, is_bot, reason, country, risk_score, risk_reasons
-    valueStrings := make([]string, 0, len(batch))
-    valueArgs := make([]interface{}, 0, len(batch)*8)
+	// Persist request, GeoIP enrichment, and risk-scoring metadata in one batch.
+	valueStrings := make([]string, 0, len(batch))
+	valueArgs := make([]interface{}, 0, len(batch)*11)
 
-    for i, entry := range batch {
-        n := i * 8
-        valueStrings = append(valueStrings, fmt.Sprintf("($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d)",
-            n+1, n+2, n+3, n+4, n+5, n+6, n+7, n+8))
+	for i, entry := range batch {
+		n := i * 11
+		valueStrings = append(valueStrings, fmt.Sprintf("($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d)",
+			n+1, n+2, n+3, n+4, n+5, n+6, n+7, n+8, n+9, n+10, n+11))
 
-        valueArgs = append(valueArgs, entry.IP)
-        valueArgs = append(valueArgs, entry.CampaignID)
-        valueArgs = append(valueArgs, entry.UserAgent)
-        valueArgs = append(valueArgs, entry.IsBot)
-        valueArgs = append(valueArgs, entry.Reason)
+		valueArgs = append(valueArgs, entry.IP)
+		valueArgs = append(valueArgs, entry.CampaignID)
+		valueArgs = append(valueArgs, entry.UserAgent)
+		valueArgs = append(valueArgs, entry.IsBot)
+		valueArgs = append(valueArgs, entry.Reason)
 
-        // Resolve country from IP (if geoReader available)
-        country := entry.Country // if already set, use it; otherwise try to resolve
-        if country == "" && bl.geoReader != nil {
-            ip := net.ParseIP(entry.IP)
-            if ip != nil {
-                if record, err := bl.geoReader.Country(ip); err == nil && record != nil {
-                    country = record.Country.IsoCode
-                }
-            }
-        }
-        valueArgs = append(valueArgs, country)
+		country := entry.Country
+		city := entry.City
+		asnNumber := entry.ASNNumber
+		asnOrg := entry.ASNOrg
 
-        valueArgs = append(valueArgs, entry.RiskScore)
-        valueArgs = append(valueArgs, entry.RiskReasons)
-    }
+		if bl.geoResolver != nil {
+			ip := net.ParseIP(entry.IP)
+			if ip != nil {
+				lookup := bl.geoResolver.Lookup(ip)
+				if country == "" {
+					country = lookup.CountryISO
+				}
+				if city == "" {
+					city = lookup.CityName
+				}
+				if asnNumber == 0 {
+					asnNumber = lookup.ASNNumber
+				}
+				if asnOrg == "" {
+					asnOrg = lookup.ASNOrg
+				}
+			}
+		}
 
-    stmt := fmt.Sprintf(`
+		valueArgs = append(valueArgs, country)
+		valueArgs = append(valueArgs, city)
+		valueArgs = append(valueArgs, int64(asnNumber))
+		valueArgs = append(valueArgs, asnOrg)
+
+		valueArgs = append(valueArgs, entry.RiskScore)
+		valueArgs = append(valueArgs, entry.RiskReasons)
+	}
+
+	stmt := fmt.Sprintf(`
         INSERT INTO click_logs 
-        (ip, campaign_id, user_agent, is_bot, reason, country, risk_score, risk_reasons) 
+        (ip, campaign_id, user_agent, is_bot, reason, country, city, asn_number, asn_org, risk_score, risk_reasons)
         VALUES %s
     `, strings.Join(valueStrings, ","))
 
-    _, err := bl.db.Exec(stmt, valueArgs...)
-    if err != nil {
-        log.Printf("[BatchLogger] Error flushing batch of %d items: %v", len(batch), err)
-        return
-    }
+	_, err := bl.db.Exec(stmt, valueArgs...)
+	if err != nil {
+		log.Printf("[BatchLogger] Error flushing batch of %d items: %v", len(batch), err)
+		return
+	}
 
-    log.Printf("[BatchLogger] Successfully flushed batch of %d logs to Postgres", len(batch))
+	log.Printf("[BatchLogger] Successfully flushed batch of %d logs to Postgres", len(batch))
 }
