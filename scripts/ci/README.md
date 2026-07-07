@@ -14,6 +14,7 @@ If you want only one check, run one of these:
 - `make ci-check-analytics`
 - `make ci-check-challenge`
 - `make ci-check-nginx-reresolve`
+- `make ci-check-frontend-reresolve`
 
 Low-level entry point: `scripts/ci/compose_smoke.sh`
 
@@ -25,6 +26,7 @@ Layout:
 - `checks/04_analytics_contract.sh` checks that analytics returns the required response fields.
 - `checks/05_challenge_flow.sh` checks `/v1/challenge` and proves an unsolved click is flagged.
 - `checks/06_nginx_reresolve.sh` recreates only the `engine` container and checks that nginx still reaches it.
+- `checks/07_frontend_engine_proxy_reresolve.sh` checks that the frontend nginx proxy still reaches the recreated engine too.
 - `lib/common.sh` holds the shared curl helpers and JSON assertions.
 
 Each file proves one thing. If CI fails, you can usually start with the matching check file instead of reading one long shell script.

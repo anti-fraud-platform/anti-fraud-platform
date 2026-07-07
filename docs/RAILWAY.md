@@ -24,6 +24,7 @@ Optional:
 - `Dockerfile.engine` now copies the MaxMind GeoIP databases into `/usr/share/GeoIP/`
 - `frontend` nginx config now uses runtime env variables instead of hardcoded upstream names
 - `Dockerfile.nginx-engine` was added for a separate simulator service on Railway
+- both public nginx-based services now detect the DNS resolver from `/etc/resolv.conf` at container startup and re-resolve upstream service names instead of pinning one old IP forever
 
 ## Recommended service layout
 
@@ -106,6 +107,8 @@ ANALYTICS_UPSTREAM=analytics.railway.internal:8081
 ENGINE_UPSTREAM=engine.railway.internal:8080
 ```
 
+`UPSTREAM_RESOLVER` is optional. If you do not set it, the container now auto-detects the nameserver from `/etc/resolv.conf`.
+
 Generate a public domain for this service. This is the main public entrypoint.
 Railway injects `PORT` automatically for public services. Do not hardcode it to `80`.
 
@@ -120,6 +123,8 @@ Service variables:
 ```env
 ENGINE_UPSTREAM=engine.railway.internal:8080
 ```
+
+`UPSTREAM_RESOLVER` is optional here too. The container auto-detects it on startup.
 
 Generate a public domain for it.
 
