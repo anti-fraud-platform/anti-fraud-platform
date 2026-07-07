@@ -11,6 +11,7 @@ checks=(
   "$SCRIPT_DIR/checks/04_analytics_contract.sh"
   "$SCRIPT_DIR/checks/05_challenge_flow.sh"
   "$SCRIPT_DIR/checks/06_nginx_reresolve.sh"
+  "$SCRIPT_DIR/checks/07_frontend_engine_proxy_reresolve.sh"
 )
 
 for check in "${checks[@]}"; do

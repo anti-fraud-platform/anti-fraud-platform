@@ -27,7 +27,8 @@
 	ci-check-simulator \
 	ci-check-analytics \
 	ci-check-challenge \
-	ci-check-nginx-reresolve
+	ci-check-nginx-reresolve \
+	ci-check-frontend-reresolve
 
 fmt:
 	gofmt -w $$(find . -name '*.go' -not -path './vendor/*')
@@ -114,3 +115,6 @@ ci-check-challenge:
 
 ci-check-nginx-reresolve:
 	bash scripts/ci/checks/06_nginx_reresolve.sh
+
+ci-check-frontend-reresolve:
+	bash scripts/ci/checks/07_frontend_engine_proxy_reresolve.sh

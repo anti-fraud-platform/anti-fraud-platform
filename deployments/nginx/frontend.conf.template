@@ -1,18 +1,24 @@
 server {
     listen ${PORT};
     server_name _;
+    resolver ${UPSTREAM_RESOLVER} valid=10s ipv6=off;
+    resolver_timeout 5s;
+    set $analytics_origin http://${ANALYTICS_UPSTREAM};
+    set $engine_origin http://${ENGINE_UPSTREAM};
 
     root /usr/share/nginx/html;
     index index.html;
 
     location /api/ {
-        proxy_pass http://${ANALYTICS_UPSTREAM}/;
+        rewrite ^/api/(.*)$ /$1 break;
+        proxy_pass $analytics_origin;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
     }
 
     location /engine/ {
-        proxy_pass http://${ENGINE_UPSTREAM}/;
+        rewrite ^/engine/(.*)$ /$1 break;
+        proxy_pass $engine_origin;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
     }
