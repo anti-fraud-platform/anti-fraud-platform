@@ -20,7 +20,7 @@ function formatReason(reason, isBot) {
     challenge_too_fast: 'Challenge too fast',
     challenge_mismatch: 'Challenge mismatch',
     suspicious_headers: 'Suspicious headers',
-    static_blacklist: 'Static blacklist',
+    geoip_policy: 'GeoIP / ASN policy',
     rate_limit_exceeded: 'Rate limit exceeded',
   };
   return map[reason] || reason || '—';
@@ -30,7 +30,7 @@ function formatReason(reason, isBot) {
 function rowTint(isBot, reason) {
   if (!isBot) return 'transparent';
   if (reason === 'suspicious_agent') return 'rgba(240, 97, 109, 0.08)';   // red-ish
-  if (reason === 'static_blacklist') return 'rgba(240, 97, 109, 0.12)';
+  if (reason === 'geoip_policy') return 'rgba(240, 97, 109, 0.12)';
   return 'rgba(139, 124, 246, 0.08)'; // purple-ish for other bot reasons
 }
 
@@ -91,7 +91,7 @@ function Logs() {
             <option value="challenge_too_fast">Challenge too fast</option>
             <option value="challenge_mismatch">Challenge mismatch</option>
             <option value="suspicious_headers">Suspicious headers</option>
-            <option value="static_blacklist">Static blacklist</option>
+            <option value="geoip_policy">GeoIP / ASN policy</option>
             <option value="rate_limit_exceeded">Rate limit exceeded</option>
           </select>
         </div>

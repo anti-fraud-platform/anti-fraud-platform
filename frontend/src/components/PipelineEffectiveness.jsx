@@ -5,7 +5,7 @@ const LAYERS = [
   { key: 'suspicious_agent', label: 'User-Agent Check', color: '#8b7cf6' },
   { key: 'js_challenge', label: 'JS Challenge', color: '#38bdf8' },
   { key: 'suspicious_headers', label: 'Header Analysis', color: '#22d3ee' },
-  { key: 'static_blacklist', label: 'Static Blacklist', color: '#f0616d' },
+  { key: 'geoip_policy', label: 'GeoIP / ASN Policy', color: '#f0616d' },
   { key: 'rate_limit_exceeded', label: 'Rate Limiter', color: '#fbbf24' },
 ];
 

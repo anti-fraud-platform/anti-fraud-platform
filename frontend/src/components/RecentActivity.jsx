@@ -7,7 +7,7 @@ const LAYER_LABEL = {
   challenge_too_fast: { prefix: 'blocked by', layer: 'JS Challenge (too fast)', color: '#38bdf8', ipFirst: true },
   challenge_mismatch: { prefix: 'blocked by', layer: 'JS Challenge (mismatch)', color: '#38bdf8', ipFirst: true },
   suspicious_headers: { prefix: 'blocked by', layer: 'Header Analysis', color: '#22d3ee', ipFirst: true },
-  static_blacklist: { prefix: 'blocked by', layer: 'Static Blacklist', color: '#f0616d', ipFirst: true },
+  geoip_policy: { prefix: 'blocked by', layer: 'GeoIP / ASN Policy', color: '#f0616d', ipFirst: true },
   rate_limit_exceeded: { prefix: 'Rate limit exceeded for IP', layer: '', color: '#fbbf24', ipFirst: false },
 };
 

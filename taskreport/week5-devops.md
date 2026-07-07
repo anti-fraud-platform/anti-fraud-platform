@@ -48,7 +48,7 @@ I also split the smoke checks into small scripts under `scripts/ci/`. Each scrip
 
 This made the CI logic easier to read and easier to debug. When one check fails, the failing script already points to the area that needs attention.
 
-### 3. GeoIP extension
+### 3. GeoIP-only detection
 
 The third area was GeoIP.
 
@@ -69,7 +69,15 @@ I then updated the batch logger so each click log can be enriched with:
 
 I also extended the database schema so these fields are stored in `click_logs`.
 
-At this stage, GeoIP is not a blocking rule. It is enrichment. The data is stored for analytics, investigation, and future fraud rules.
+After that, I removed the old file-based `dirty_ips` path from the runtime flow and switched the engine to GeoIP-only blocking.
+
+The engine now reads blocking rules from environment variables:
+
+- `GEOIP_BLOCKED_COUNTRIES`
+- `GEOIP_BLOCKED_ASN_NUMBERS`
+- `GEOIP_BLOCKED_ASN_KEYWORDS`
+
+For the default local stack, I configured ASN keyword rules that catch traffic coming from common hosting and proxy networks. That means the hard block layer is now based on MaxMind country / ASN data rather than a hand-maintained IP text file.
 
 ### 4. Safe schema upgrades for old volumes
 

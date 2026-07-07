@@ -4,7 +4,7 @@ import axios from 'axios';
 // Real health check, replacing the previous hardcoded "all Healthy" mock.
 // Two backend health endpoints exist and are already reachable from this
 // origin via frontend/nginx/frontend.conf's existing proxies:
-//   /engine/health -> engine service:   { redis, postgres, blacklist_loaded }
+//   /engine/health -> engine service:   { redis, postgres, geoip_loaded }
 //   /api/health    -> analytics service: { postgres }
 //
 // Honest limitation, worth keeping in mind: "Challenge Service" has no
@@ -33,7 +33,7 @@ function useHealth(intervalMs = 5000) {
         redis: engine?.redis ?? 'unknown',
         enginePostgres: engine?.postgres ?? 'unknown',
         analyticsPostgres: analytics?.postgres ?? 'unknown',
-        blacklistLoaded: engine?.blacklist_loaded ?? false,
+        geoipLoaded: engine?.geoip_loaded ?? false,
       });
     }
 
@@ -60,7 +60,7 @@ function SystemHealth() {
       name: 'PostgreSQL',
       healthy: health ? health.enginePostgres === 'healthy' && health.analyticsPostgres === 'healthy' : null,
     },
-    { name: 'Blacklist Sync', healthy: health ? health.blacklistLoaded === true : null },
+    { name: 'GeoIP Databases', healthy: health ? health.geoipLoaded === true : null },
   ];
 
   const anyUnknown = services.some((s) => s.healthy === null);

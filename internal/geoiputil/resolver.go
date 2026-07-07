@@ -29,6 +29,22 @@ type Resolver struct {
 	asnReader     *geoip2.Reader
 }
 
+func (r *Resolver) HasCountry() bool {
+	return r != nil && r.countryReader != nil
+}
+
+func (r *Resolver) HasCity() bool {
+	return r != nil && r.cityReader != nil
+}
+
+func (r *Resolver) HasASN() bool {
+	return r != nil && r.asnReader != nil
+}
+
+func (r *Resolver) HasAny() bool {
+	return r.HasCountry() || r.HasCity() || r.HasASN()
+}
+
 func PathsFromEnv() Paths {
 	countryPath := os.Getenv("GEOIP_COUNTRY_DB_PATH")
 	if countryPath == "" {

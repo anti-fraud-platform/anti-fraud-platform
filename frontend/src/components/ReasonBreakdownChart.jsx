@@ -9,7 +9,7 @@ function labelFor(reason) {
     challenge_too_fast: 'Challenge too fast',
     challenge_mismatch: 'Challenge mismatch',
     suspicious_headers: 'Suspicious headers',
-    static_blacklist: 'Static blacklist',
+    geoip_policy: 'GeoIP / ASN policy',
     rate_limit_exceeded: 'Rate limit exceeded',
   };
   return map[reason] || reason;

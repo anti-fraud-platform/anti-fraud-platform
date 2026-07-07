@@ -13,9 +13,10 @@ import (
 	"sync"
 	"time"
 
-	"anti-fraud/internal/bloom"
 	"anti-fraud/internal/challenge"
 	"anti-fraud/internal/dbschema"
+	"anti-fraud/internal/geoiputil"
+	"anti-fraud/internal/geopolicy"
 	"anti-fraud/internal/headercheck"
 	"anti-fraud/internal/logger"
 
@@ -39,9 +40,10 @@ type ClickPayload struct {
 var (
 	rdb            *redis.Client
 	db             *sql.DB
-	ipFilter       *bloom.IPFilter
 	batchLogger    *logger.BatchLogger
 	challengeStore challenge.Store
+	geoResolver    *geoiputil.Resolver
+	geoPolicy      geopolicy.Config
 	ctx            = context.Background()
 	maxRate        = 5
 	bgTasks        sync.WaitGroup
@@ -77,8 +79,8 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 	} else {
 		status["postgres"] = "healthy"
 	}
-	// Bloom filter loaded?
-	status["blacklist_loaded"] = ipFilter != nil
+	status["geoip_loaded"] = geoResolver != nil && geoResolver.HasAny()
+	status["geoip_policy_enabled"] = geoPolicy.Enabled()
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(status)
@@ -128,16 +130,27 @@ func main() {
 	}
 	log.Println("PostgreSQL schema is up to date")
 
-	blacklistPath := getEnv("BLACKLIST_PATH", "./deployments/blacklists/dirty_ips.txt")
-	ipFilter, err = bloom.NewIPFilter(blacklistPath)
-	if err != nil {
-		log.Fatalf("Failed to initialize Bloom Filter: %v", err)
+	geoResolver, errs := geoiputil.OpenBestEffort(geoiputil.PathsFromEnv())
+	for _, openErr := range errs {
+		log.Printf("Failed to open GeoIP database: %v", openErr)
 	}
+	if geoResolver == nil || !geoResolver.HasAny() {
+		log.Fatal("Failed to initialize GeoIP resolver: no readable .mmdb database was loaded")
+	}
+
+	geoPolicy, err = geopolicy.FromEnv()
+	if err != nil {
+		log.Fatalf("Failed to parse GeoIP policy config: %v", err)
+	}
+	if !geoPolicy.Enabled() {
+		log.Fatal("GeoIP-only mode requires at least one GEOIP_BLOCKED_* rule")
+	}
+	log.Printf("GeoIP policy loaded: %s", geoPolicy.Summary())
 
 	batchSize, _ := strconv.Atoi(getEnv("DB_BATCH_SIZE", "1000"))
 	flushIntervalMs, _ := strconv.Atoi(getEnv("DB_BATCH_FLUSH_MS", "500"))
 
-	batchLogger = logger.NewBatchLogger(db, batchSize, flushIntervalMs)
+	batchLogger = logger.NewBatchLoggerWithResolver(db, batchSize, flushIntervalMs, geoResolver)
 	batchLogger.Start(ctx)
 	log.Println("Asynchronous Batch Logger started")
 
@@ -277,19 +290,30 @@ func handleClick(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 2) Static blacklist (Bloom filter)
-	if ipFilter != nil && ipFilter.IsBlacklisted(ip) {
+	// 2) GeoIP / ASN policy
+	lookup := geoiputil.LookupResult{IP: ip}
+	if geoResolver != nil {
+		parsedIP := net.ParseIP(ip)
+		if parsedIP != nil {
+			lookup = geoResolver.Lookup(parsedIP)
+		}
+	}
+	if match := geoPolicy.Evaluate(lookup); match.Blocked {
 		if batchLogger != nil {
 			batchLogger.LogAsync(logger.ClickLog{
 				IP:         ip,
 				CampaignID: campaignID,
 				UserAgent:  ua,
 				IsBot:      true,
-				Reason:     "static_blacklist",
+				Reason:     match.Reason,
+				Country:    lookup.CountryISO,
+				City:       lookup.CityName,
+				ASNNumber:  lookup.ASNNumber,
+				ASNOrg:     lookup.ASNOrg,
 			})
 		}
 		w.WriteHeader(http.StatusForbidden)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Blocked by static blacklist."})
+		json.NewEncoder(w).Encode(map[string]string{"error": "Blocked by GeoIP / ASN policy."})
 		return
 	}
 

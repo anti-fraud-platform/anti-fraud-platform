@@ -7,7 +7,7 @@ const LAYER_INFO = {
   challenge_too_fast: { n: 2, label: 'JS Challenge', color: '#38bdf8' },
   challenge_mismatch: { n: 2, label: 'JS Challenge', color: '#38bdf8' },
   suspicious_headers: { n: 3, label: 'Header Analysis', color: '#22d3ee' },
-  static_blacklist: { n: 4, label: 'Blacklist', color: '#f0616d' },
+  geoip_policy: { n: 4, label: 'GeoIP / ASN', color: '#f0616d' },
   rate_limit_exceeded: { n: 5, label: 'Rate Limiter', color: '#fbbf24' },
 };
 

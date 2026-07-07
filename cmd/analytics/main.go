@@ -61,7 +61,7 @@ type StatsResponse struct {
 	// ReasonBreakdown maps every distinct click_logs.reason value (blocked
 	// ones only) to its count, e.g. {"suspicious_agent": 12,
 	// "no_js_challenge": 340, "suspicious_headers": 88,
-	// "static_blacklist": 4, "rate_limit_exceeded": 900}. Lets the
+	// "geoip_policy": 4, "rate_limit_exceeded": 900}. Lets the
 	// dashboard show every detection layer's contribution without the
 	// backend needing to add a new named field each time a new check ships.
 	ReasonBreakdown map[string]int64 `json:"reason_breakdown"`
@@ -95,10 +95,10 @@ type LogsResponse struct {
 
 // BlacklistSummaryResponse holds statistics for the blacklist dashboard metrics.
 type BlacklistSummaryResponse struct {
-	TotalBlocked    int64 `json:"total_blocked"`
-	StaticBlacklist int64 `json:"static_blacklist"`
-	RateLimited     int64 `json:"rate_limited"`
-	AutoBlocked24h  int64 `json:"auto_blocked_24h"`
+	TotalBlocked   int64 `json:"total_blocked"`
+	GeoIPPolicy    int64 `json:"geoip_policy_blocked"`
+	RateLimited    int64 `json:"rate_limited"`
+	AutoBlocked24h int64 `json:"auto_blocked_24h"`
 
 	// New Tier-1 detection layers, broken out the same way the existing
 	// fields are, so the Blacklist page's summary cards can show them
@@ -470,9 +470,9 @@ func blacklistSummaryHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = db.QueryRow("SELECT COUNT(*) FROM click_logs WHERE reason = 'static_blacklist'").Scan(&summary.StaticBlacklist)
+	err = db.QueryRow("SELECT COUNT(*) FROM click_logs WHERE reason = 'geoip_policy'").Scan(&summary.GeoIPPolicy)
 	if err != nil {
-		log.Printf("Error querying static blacklist count: %v", err)
+		log.Printf("Error querying GeoIP policy count: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -623,7 +623,7 @@ func auditEventsHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(events)
 }
 
-// blacklistIPsHandler returns the list of IPs blocked due to static_blacklist
+// blacklistIPsHandler returns the list of IPs blocked due to the GeoIP policy.
 func blacklistIPsHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -642,7 +642,7 @@ func blacklistIPsHandler(w http.ResponseWriter, r *http.Request) {
 			MIN(processed_at) as first_blocked,
 			MAX(processed_at) as last_blocked
 		FROM click_logs
-		WHERE reason = 'static_blacklist'
+		WHERE reason = 'geoip_policy'
 		GROUP BY ip
 		ORDER BY last_blocked DESC
 		LIMIT 50
@@ -670,7 +670,7 @@ func blacklistIPsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var total int64
-	db.QueryRow("SELECT COUNT(DISTINCT ip) FROM click_logs WHERE reason = 'static_blacklist'").Scan(&total)
+	db.QueryRow("SELECT COUNT(DISTINCT ip) FROM click_logs WHERE reason = 'geoip_policy'").Scan(&total)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
