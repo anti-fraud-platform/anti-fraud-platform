@@ -129,8 +129,9 @@ func main() {
 		log.Fatalf("Failed to apply PostgreSQL schema: %v", err)
 	}
 	log.Println("PostgreSQL schema is up to date")
-
-	geoResolver, errs := geoiputil.OpenBestEffort(geoiputil.PathsFromEnv())
+	
+	var errs []error
+	geoResolver, errs = geoiputil.OpenBestEffort(geoiputil.PathsFromEnv())
 	for _, openErr := range errs {
 		log.Printf("Failed to open GeoIP database: %v", openErr)
 	}
