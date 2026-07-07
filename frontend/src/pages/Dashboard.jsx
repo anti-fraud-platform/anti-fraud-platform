@@ -1,4 +1,4 @@
-import { MousePointerClick, ShieldAlert, CheckCircle, /* DollarSign,*/ Flag } from 'lucide-react';
+import { MousePointerClick, ShieldAlert, CheckCircle, Flag } from 'lucide-react';
 import Layout from '../components/Layout';
 import { useStats } from '../hooks/useStats';
 import StatCard from '../components/StatCard';
@@ -19,12 +19,6 @@ function formatNumber(n) {
   return Number(n).toLocaleString('en-US');
 }
 
-/*
-function formatMoney(n) {
-  return '$' + Number(n).toLocaleString('en-US', { maximumFractionDigits: 0 });
-}
-*/
-
 function Dashboard() {
   const { data, loading, error } = useStats(2500);
   const trend = useTrend(5000);
@@ -34,7 +28,6 @@ function Dashboard() {
         { label: 'Total clicks', value: formatNumber(data.total_clicks), danger: false, icon: <MousePointerClick/>, delta: '18.4%', deltaUp: true },
         { label: 'Blocked clicks', value: formatNumber(data.blocked_count ?? data.blocked_bots), danger: true, icon: <ShieldAlert/>, delta: '24.6%', deltaUp: true },
         { label: 'Allowed clicks', value: formatNumber(data.allowed_count ?? 0), danger: false, icon: <CheckCircle/>, delta: '11.2%', deltaUp: true },
-        /*{ label: 'Money saved', value: formatMoney(data.budget_saved), danger: false, icon: <DollarSign/>, delta: '19.2%', deltaUp: true },*/
         { label: 'Active campaigns', value: formatNumber((data.campaigns ?? []).length), danger: false, icon: <Flag/>, delta: '2', deltaUp: true },
       ]
     : [];

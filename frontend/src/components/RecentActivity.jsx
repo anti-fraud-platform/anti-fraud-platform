@@ -20,8 +20,8 @@ function timeOf(iso) {
 }
 
 function RecentActivity() {
-  const { data } = useLogs({ page: 1, limit: 12 }, 2500);
-  const rows = (data?.data ?? []).filter((r) => r.is_bot).slice(0, 5);
+  const { data } = useLogs({ page: 1, is_bot: true, limit: 12 }, 2500);
+  const rows = (data?.data ?? []).slice(0, 5);
 
   return (
     <div className="border border-border rounded-lg overflow-hidden">
