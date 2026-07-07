@@ -19,19 +19,16 @@ services:
       DB_BATCH_FLUSH_MS: "500"
       REDIS_HOST: redis
       REDIS_PORT: "6379"
-      BLACKLIST_PATH: /app/data/dirty_ips.txt
       GEOIP_DB_PATH: /usr/share/GeoIP/GeoLite2-Country.mmdb
       GEOIP_COUNTRY_DB_PATH: /usr/share/GeoIP/GeoLite2-Country.mmdb
       GEOIP_CITY_DB_PATH: /usr/share/GeoIP/GeoLite2-City.mmdb
       GEOIP_ASN_DB_PATH: /usr/share/GeoIP/GeoLite2-ASN.mmdb
+      GEOIP_BLOCKED_ASN_KEYWORDS: "digitalocean,cloudflare,hetzner,ovh,linode,vultr,choopa,contabo,scaleway,oracle,amazon technologies,microsoft azure,google cloud"
       REQUIRE_JS_CHALLENGE: "true"
       REQUIRE_HEADER_CHECK: "true"
 
     expose:
       - "8080"
-    volumes:
-      - ./deployments/blacklists/dirty_ips.txt:/app/data/dirty_ips.txt:ro
-      - ./geoip:/usr/share/GeoIP:ro
 
     depends_on:
       postgres:

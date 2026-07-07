@@ -85,11 +85,10 @@ func randomIP(rng *rand.Rand) string {
 	)
 }
 
-// loadBlacklistIPs reads one IP per line from path. Blank lines and
-// "#" comments are skipped. Used to inject real known-bad IPs into
-// the simulated traffic stream so we can prove the Bloom filter
-// drops them.
-func loadBlacklistIPs(path string) ([]string, error) {
+// loadIPPool reads one IP per line from path. Blank lines and "#"
+// comments are skipped. Used to inject a controlled set of public IPs
+// into the stream for GeoIP / ASN policy demos.
+func loadIPPool(path string) ([]string, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -121,8 +120,8 @@ func computeChallengeToken(nonce string) string {
 // gradient of sophistication: naive bot -> bot that solves the JS
 // challenge -> full browser-shaped legit traffic.
 type profile struct {
-	blacklistIPs    []string // pool of real dirty IPs, loaded from file
-	blacklistChance float64  // 0.0–1.0, probability a given request uses one
+	policyIPs    []string // pool of public IPs used for GeoIP / ASN policy demos
+	policyChance float64  // 0.0–1.0, probability a given request uses one
 
 	stickyUA bool   // if true, every request from this worker reuses one User-Agent
 	fixedUA  string // the User-Agent picked once, reused (set when stickyUA is true)
@@ -138,15 +137,15 @@ type profile struct {
 	challengeURL   string // derived from -target; only used if solveChallenge is true
 }
 
-func randomEvent(rng *rand.Rand, p *profile, isBlacklisted *bool) ClickEvent {
+func randomEvent(rng *rand.Rand, p *profile, isPolicyIP *bool) ClickEvent {
 	ip := p.fixedIP
 	if ip == "" {
-		if len(p.blacklistIPs) > 0 && rng.Float64() < p.blacklistChance {
-			ip = p.blacklistIPs[rng.Intn(len(p.blacklistIPs))]
-			*isBlacklisted = true
+		if len(p.policyIPs) > 0 && rng.Float64() < p.policyChance {
+			ip = p.policyIPs[rng.Intn(len(p.policyIPs))]
+			*isPolicyIP = true
 		} else {
 			ip = randomIP(rng)
-			*isBlacklisted = false
+			*isPolicyIP = false
 		}
 	}
 
@@ -227,12 +226,12 @@ func deriveChallengeURL(target string) string {
 // miscounted as "ok" because only the HTTP status code was checked.
 
 type counters struct {
-	sent        atomic.Int64 // every request attempted
-	ok          atomic.Int64 // HTTP 200 AND status=="success" — an actually clean, allowed click
-	flagged     atomic.Int64 // HTTP 200 AND status=="flagged" — caught by UA/challenge/header checks
-	blocked     atomic.Int64 // HTTP 429 (Redis rate limiter)
-	blacklisted atomic.Int64 // HTTP 403 (Bloom filter blacklist)
-	errs        atomic.Int64 // network errors, non-JSON bodies, or unexpected status codes
+	sent       atomic.Int64 // every request attempted
+	ok         atomic.Int64 // HTTP 200 AND status=="success" — an actually clean, allowed click
+	flagged    atomic.Int64 // HTTP 200 AND status=="flagged" — caught by UA/challenge/header checks
+	blocked    atomic.Int64 // HTTP 429 (Redis rate limiter)
+	geoBlocked atomic.Int64 // HTTP 403 (GeoIP / ASN policy)
+	errs       atomic.Int64 // network errors, non-JSON bodies, or unexpected status codes
 }
 
 // --- worker ---
@@ -254,8 +253,8 @@ func worker(
 	for time.Now().Before(deadline) {
 		start := time.Now()
 
-		var injectedBlacklist bool
-		event := randomEvent(rng, p, &injectedBlacklist)
+		var injectedPolicyIP bool
+		event := randomEvent(rng, p, &injectedPolicyIP)
 
 		if p.solveChallenge {
 			id, token, ok := fetchChallenge(client, p.challengeURL)
@@ -318,8 +317,8 @@ func worker(
 				}
 			case http.StatusTooManyRequests: // 429 — Redis rate limiter
 				c.blocked.Add(1)
-			case http.StatusForbidden: // 403 — Bloom filter blacklist
-				c.blacklisted.Add(1)
+			case http.StatusForbidden: // 403 — GeoIP / ASN policy
+				c.geoBlocked.Add(1)
 			default:
 				c.errs.Add(1)
 			}
@@ -343,10 +342,10 @@ func printReport(target string, mode string, c *counters, elapsed float64) {
 	ok := c.ok.Load()
 	flagged := c.flagged.Load()
 	blocked := c.blocked.Load()
-	blacklisted := c.blacklisted.Load()
+	geoBlocked := c.geoBlocked.Load()
 	errs := c.errs.Load()
 
-	caught := flagged + blocked + blacklisted
+	caught := flagged + blocked + geoBlocked
 	var efficiency float64
 	if total > 0 {
 		efficiency = float64(caught) / float64(total) * 100
@@ -364,7 +363,7 @@ func printReport(target string, mode string, c *counters, elapsed float64) {
 	fmt.Printf("  Clean Clicks (200 success)     : %d\n", ok)
 	fmt.Printf("  Flagged (200 flagged)          : %d\n", flagged)
 	fmt.Printf("  Rate-Limit Hits (429)          : %d\n", blocked)
-	fmt.Printf("  Blacklist Hits (403)           : %d\n", blacklisted)
+	fmt.Printf("  GeoIP / ASN Blocks (403)       : %d\n", geoBlocked)
 	fmt.Printf("  Errors (other)                 : %d\n", errs)
 	fmt.Println("------------------------------")
 	fmt.Printf("  Overall Catch Rate  : %.1f%%\n", efficiency)
@@ -388,8 +387,8 @@ func main() {
 	attack := flag.Bool("attack", false, "Attack mode: one fixed IP at 100 rps per worker")
 	attackIP := flag.String("attack-ip", "1.2.3.4", "Fixed IP used in attack mode")
 
-	blacklistFile := flag.String("blacklist-file", "deployments/blacklists/dirty_ips.txt", "Path to known-bad IP list")
-	blacklistChance := flag.Float64("blacklist-chance", 0.0, "Probability (0.0-1.0) a request uses a real blacklisted IP")
+	policyIPFile := flag.String("policy-ip-file", "", "Path to a public-IP pool used for GeoIP / ASN policy demos")
+	policyChance := flag.Float64("policy-ip-chance", 0.0, "Probability (0.0-1.0) a request uses an IP from -policy-ip-file")
 
 	stickyUA := flag.Bool("sticky-ua", false, "Distributed fraud: keep one User-Agent across many IPs")
 	floodCampaign := flag.String("flood-campaign", "", "Distributed fraud: hammer this single campaign ID from many IPs")
@@ -402,12 +401,12 @@ func main() {
 	flag.Parse()
 
 	p := &profile{
-		blacklistChance: *blacklistChance,
-		stickyUA:        *stickyUA,
-		floodCampaign:   *floodCampaign,
-		jitterMaxMs:     *jitterMs,
-		solveChallenge:  *solveChallenge,
-		browserHeaders:  *browserHeaders,
+		policyChance:   *policyChance,
+		stickyUA:       *stickyUA,
+		floodCampaign:  *floodCampaign,
+		jitterMaxMs:    *jitterMs,
+		solveChallenge: *solveChallenge,
+		browserHeaders: *browserHeaders,
 	}
 
 	if p.solveChallenge {
@@ -418,13 +417,13 @@ func main() {
 		}
 	}
 
-	if *blacklistChance > 0 {
-		ips, err := loadBlacklistIPs(*blacklistFile)
+	if *policyChance > 0 && *policyIPFile != "" {
+		ips, err := loadIPPool(*policyIPFile)
 		if err != nil {
-			fmt.Printf("⚠️  Could not load blacklist file (%v) — continuing without blacklist injection\n", err)
+			fmt.Printf("⚠️  Could not load policy IP file (%v) — continuing without GeoIP policy injection\n", err)
 		} else {
-			p.blacklistIPs = ips
-			fmt.Printf("Loaded %d blacklisted IPs from %s\n", len(ips), *blacklistFile)
+			p.policyIPs = ips
+			fmt.Printf("Loaded %d policy IPs from %s\n", len(ips), *policyIPFile)
 		}
 	}
 
@@ -440,8 +439,8 @@ func main() {
 	if *floodCampaign != "" {
 		mode += "+CAMPAIGN_FLOOD"
 	}
-	if *blacklistChance > 0 {
-		mode += "+BLACKLIST_INJECT"
+	if *policyChance > 0 && *policyIPFile != "" {
+		mode += "+GEOIP_POLICY_IPS"
 	}
 	if *solveChallenge {
 		mode += "+SOLVES_CHALLENGE"
@@ -490,7 +489,7 @@ func main() {
 		for range ticker.C {
 			cur := c.sent.Load()
 			fmt.Printf("\r  sent: %-8d  ok: %-8d  flagged: %-8d  429: %-8d  403: %-8d  rps: %-6d",
-				cur, c.ok.Load(), c.flagged.Load(), c.blocked.Load(), c.blacklisted.Load(), cur-prev)
+				cur, c.ok.Load(), c.flagged.Load(), c.blocked.Load(), c.geoBlocked.Load(), cur-prev)
 			prev = cur
 		}
 	}()

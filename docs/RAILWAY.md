@@ -4,8 +4,8 @@ This project can run on Railway, but the service layout is not exactly the same 
 
 Local Compose gives us two things automatically:
 
-1. bind-mounted files such as `deployments/blacklists/dirty_ips.txt`
-2. Docker service DNS names like `engine` and `analytics`
+1. Docker service DNS names like `engine` and `analytics`
+2. local bridge networking between the services
 
 Railway does not reuse that setup directly. Because of that, the safest Railway layout is:
 
@@ -21,7 +21,7 @@ Optional:
 
 ## What changed in the repo
 
-- `Dockerfile.engine` now copies `dirty_ips.txt` into the image at `/app/data/dirty_ips.txt`
+- `Dockerfile.engine` now copies the MaxMind GeoIP databases into `/usr/share/GeoIP/`
 - `frontend` nginx config now uses runtime env variables instead of hardcoded upstream names
 - `Dockerfile.nginx-engine` was added for a separate simulator service on Railway
 
@@ -46,7 +46,6 @@ Service variables:
 ```env
 PORT=8080
 ENGINE_PORT=8080
-BLACKLIST_PATH=/app/data/dirty_ips.txt
 DB_HOST=${{Postgres.PGHOST}}
 DB_PORT=${{Postgres.PGPORT}}
 DB_USER=${{Postgres.PGUSER}}
@@ -56,6 +55,10 @@ REDIS_HOST=${{Redis.REDISHOST}}
 REDIS_PORT=${{Redis.REDISPORT}}
 REDIS_USER=${{Redis.REDISUSER}}
 REDIS_PASSWORD=${{Redis.REDISPASSWORD}}
+GEOIP_COUNTRY_DB_PATH=/usr/share/GeoIP/GeoLite2-Country.mmdb
+GEOIP_CITY_DB_PATH=/usr/share/GeoIP/GeoLite2-City.mmdb
+GEOIP_ASN_DB_PATH=/usr/share/GeoIP/GeoLite2-ASN.mmdb
+GEOIP_BLOCKED_ASN_KEYWORDS=digitalocean,cloudflare,hetzner,ovh,linode,vultr,choopa,contabo,scaleway,oracle,amazon technologies,microsoft azure,google cloud
 DB_BATCH_SIZE=1000
 DB_BATCH_FLUSH_MS=500
 DB_MAX_OPEN_CONNS=80
@@ -122,4 +125,4 @@ Generate a public domain for it.
 
 ## GeoIP note
 
-GeoIP databases are not bundled into the repo. That means the Railway deployment can run without GeoIP enrichment, but full GeoIP verification will only work after you provide the `.mmdb` files in a Railway-friendly way.
+The GeoIP databases are bundled in the repo and copied into the engine image during the Docker build. That means Railway gets the same GeoIP / ASN policy data as local Docker without an extra volume or manual upload step.

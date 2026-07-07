@@ -4,7 +4,7 @@
 
 Real-time click fraud detection for ad traffic. Built with Go, Redis, PostgreSQL and React.
 
-Each click goes through four checks: automated user-agent detection, a Bloom filter against 12,000 known bad IPs, a Redis rate limiter (5 req/s per IP), and an async batch logger that writes to Postgres every 500ms. A separate analytics service reads from the same DB and powers the dashboard.
+Each click goes through four checks: automated user-agent detection, a GeoIP / ASN policy based on MaxMind `.mmdb` databases, a Redis rate limiter (5 req/s per IP), and an async batch logger that writes to Postgres every 500ms. A separate analytics service reads from the same DB and powers the dashboard.
 
 ![Infra](docs/infra.png)
 
@@ -27,7 +27,7 @@ PostgreSQL is the only persistent store. The schema is in `deployments/init-db.s
 
 Two tables:
 
-`click_logs` stores every click that hits the engine, both allowed and blocked. The `reason` column can hold `allowed`, `dynamic_blacklist`, `static_blacklist`, `rate_limit_exceeded`, `suspicious_agent`, `no_js_challenge`, `challenge_too_fast`, `challenge_mismatch`, `suspicious_headers`, or `risk_score_exceeded`. Indexes on `ip`, `campaign_id`, and `processed_at` keep the analytics queries fast even at high row counts.
+`click_logs` stores every click that hits the engine, both allowed and blocked. The `reason` column can hold `allowed`, `dynamic_blacklist`, `geoip_policy`, `rate_limit_exceeded`, `suspicious_agent`, `no_js_challenge`, `challenge_too_fast`, `challenge_mismatch`, `suspicious_headers`, or `risk_score_exceeded`. Indexes on `ip`, `campaign_id`, and `processed_at` keep the analytics queries fast even at high row counts.
 
 `audit_events` stores system events for the activity feed. Empty by default, populated manually or via an application hook.
 
@@ -48,7 +48,7 @@ SELECT reason, count(*) FROM click_logs GROUP BY reason;
 
 -- top blocked IPs
 SELECT ip, count(*) as hits FROM click_logs
-WHERE reason = 'static_blacklist'
+WHERE reason = 'geoip_policy'
 GROUP BY ip ORDER BY hits DESC LIMIT 10;
 ```
 
@@ -91,7 +91,7 @@ cd anti-fraud-platform
 
 This builds and starts six containers: `engine`, `nginx_engine`, `analytics`, `frontend`, `postgres`, `redis`. The first build takes 1-3 minutes depending on your machine; subsequent runs are faster since Docker caches layers.
 
-If you want real GeoIP checks, add the real MaxMind databases at `geoip/GeoLite2-Country.mmdb`, `geoip/GeoLite2-City.mmdb`, and `geoip/GeoLite2-ASN.mmdb` before you start testing. The short setup is in [geoip/README.md](geoip/README.md). The stack still boots without them, but GeoIP verification is incomplete until you add them.
+The repository already includes the MaxMind databases at `geoip/GeoLite2-Country.mmdb`, `geoip/GeoLite2-City.mmdb`, and `geoip/GeoLite2-ASN.mmdb`. The engine image copies them at build time, so GeoIP / ASN rules work out of the box in local Docker and Railway.
 
 If your local Postgres volume already existed from an older project week, the services now apply the current schema automatically on startup. You do not need to wipe the volume just to pick up new tables like `campaigns` or new columns like `risk_reasons`.
 
@@ -238,7 +238,7 @@ Full setup guide with additional troubleshooting: [docs/SETUP.md](docs/SETUP.md)
 
 GeoIP only makes sense if the databases are real and the IP is a real public address.
 
-After you place `GeoLite2-Country.mmdb`, `GeoLite2-City.mmdb`, and `GeoLite2-ASN.mmdb` into `geoip/`, you can verify the direct lookup locally with:
+The repository already contains `GeoLite2-Country.mmdb`, `GeoLite2-City.mmdb`, and `GeoLite2-ASN.mmdb`, so you can verify the direct lookup locally right away with:
 
 ```bash
 go run ./cmd/geoiplookup -ip 8.8.8.8
@@ -342,7 +342,7 @@ go test $(go list ./... | grep -v frontend) -race -count=1
 
 ```
 ok   anti-fraud/cmd/engine        1.8s
-ok   anti-fraud/internal/bloom    1.4s
+ok   anti-fraud/internal/geopolicy 1.4s
 ok   anti-fraud/internal/engine   1.5s
 ```
 
@@ -351,7 +351,7 @@ Notable tests:
 - `TestHandleClickIgnoresSpoofedBodyIP` - confirms the body `ip` field is ignored, rate limiting always uses the real connection IP
 - `TestHandleClickSelfHealsKeyMissingTTL` - confirms a Redis key that lost its TTL recovers automatically via ExpireNX on the next request
 - `TestHandleClickSuspiciousAgentDetection` - confirms bot user-agents (curl, python-requests, empty UA, explicit automated header) are all flagged correctly
-- `TestIPFilter_LogicAndMemory` - Bloom filter loads 12,000 IPs with 0 bytes of unexpected memory growth
+- `TestEvaluateMatchesBlockedASNKeyword` - confirms GeoIP / ASN policy blocks configured network organizations
 - `TestClickIntegrationPipeline` - full HTTP round trip against a real Redis instance
 
 ![Sustained load test result](docs/Sustained%20load%20test%20result.jpeg)
@@ -384,13 +384,13 @@ Notable tests:
 
 Paginated click log. Query params: `page`, `limit`, `campaign_id`, `is_bot`, `reason`, `from`, `to`.
 
-`reason` accepts the stored click reasons such as `allowed`, `dynamic_blacklist`, `static_blacklist`, `rate_limit_exceeded`, `suspicious_agent`, `no_js_challenge`, `challenge_too_fast`, `challenge_mismatch`, `suspicious_headers`, and `risk_score_exceeded`.
+`reason` accepts the stored click reasons such as `allowed`, `dynamic_blacklist`, `geoip_policy`, `rate_limit_exceeded`, `suspicious_agent`, `no_js_challenge`, `challenge_too_fast`, `challenge_mismatch`, `suspicious_headers`, and `risk_score_exceeded`.
 
 `from` and `to` accept RFC3339 or `YYYY-MM-DD` format.
 
 ### GET /v1/analytics/blacklist/ips
 
-Only includes IPs blocked via the static blacklist (`reason = static_blacklist`). Clicks flagged by user-agent detection don't appear here, they're visible through `/v1/analytics/logs` filtered by `reason=suspicious_agent`.
+Only includes IPs blocked via the GeoIP / ASN policy (`reason = geoip_policy`). Clicks flagged by user-agent detection don't appear here, they're visible through `/v1/analytics/logs` filtered by `reason=suspicious_agent`.
 
 ```json
 {
@@ -411,7 +411,7 @@ Only includes IPs blocked via the static blacklist (`reason = static_blacklist`)
 ```json
 {
   "total_blocked": 300257,
-  "static_blacklist": 43,
+  "geoip_policy_blocked": 43,
   "rate_limited": 300214,
   "auto_blocked_24h": 39
 }

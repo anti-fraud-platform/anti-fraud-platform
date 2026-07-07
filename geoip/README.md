@@ -1,8 +1,8 @@
 # GeoIP Database Setup
 
-The repository tracks the `geoip/` directory, but it does not store the real MaxMind database files.
+The repository stores the real MaxMind databases directly in `geoip/`.
 
-For real GeoIP checks, place these files here:
+These files should be present:
 
 ```text
 geoip/GeoLite2-Country.mmdb
@@ -20,12 +20,10 @@ The engine reads them from:
 
 Those paths are wired through the `GEOIP_COUNTRY_DB_PATH`, `GEOIP_CITY_DB_PATH`, and `GEOIP_ASN_DB_PATH` environment variables in `docker-compose.yml`.
 
-## How to add the real databases
+## How to refresh the databases
 
-1. Download `GeoLite2-Country`, `GeoLite2-City`, and `GeoLite2-ASN` from MaxMind.
-2. Extract the archive.
-3. Copy the three `.mmdb` files into this `geoip/` directory.
-4. Rebuild the engine:
+1. Replace the three `.mmdb` files in this directory with newer MaxMind versions.
+2. Rebuild the engine:
 
 ```bash
 docker compose up --build -d engine

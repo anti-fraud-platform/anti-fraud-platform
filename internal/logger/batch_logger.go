@@ -35,11 +35,20 @@ type BatchLogger struct {
 }
 
 func NewBatchLogger(db *sql.DB, batchSize int, flushIntervalMs int) *BatchLogger {
+	return NewBatchLoggerWithResolver(db, batchSize, flushIntervalMs, nil)
+}
+
+func NewBatchLoggerWithResolver(db *sql.DB, batchSize int, flushIntervalMs int, resolver *geoiputil.Resolver) *BatchLogger {
 	bl := &BatchLogger{
 		db:            db,
 		logChan:       make(chan ClickLog, batchSize*2),
 		batchSize:     batchSize,
 		flushInterval: time.Duration(flushIntervalMs) * time.Millisecond,
+	}
+
+	if resolver != nil {
+		bl.geoResolver = resolver
+		return bl
 	}
 
 	resolver, errs := geoiputil.OpenBestEffort(geoiputil.PathsFromEnv())

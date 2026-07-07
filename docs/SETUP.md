@@ -60,9 +60,7 @@ This should build and start six services:
 - `antifraud-postgres`
 - `antifraud-redis`
 
-For real GeoIP checks, place the real MaxMind databases at `geoip/GeoLite2-Country.mmdb`, `geoip/GeoLite2-City.mmdb`, and `geoip/GeoLite2-ASN.mmdb` before you begin testing. The short version is in [geoip/README.md](../geoip/README.md).
-
-The stack still starts without them, but GeoIP verification is incomplete until you add them.
+The repository already contains the MaxMind databases at `geoip/GeoLite2-Country.mmdb`, `geoip/GeoLite2-City.mmdb`, and `geoip/GeoLite2-ASN.mmdb`. The engine image copies them during the Docker build, so GeoIP checks work without an extra setup step.
 
 If your Postgres volume already existed from an older version of the project, the services now run an idempotent schema upgrade on startup. That means older local data can stay in place while missing tables and columns are added automatically.
 
@@ -178,15 +176,13 @@ That one restart is only a rollout safety step for older containers. Fresh build
 
 ## 7. Real GeoIP verification
 
-1. Download and extract `GeoLite2-Country.mmdb`, `GeoLite2-City.mmdb`, and `GeoLite2-ASN.mmdb`.
-2. Place them in `geoip/`.
-3. Rebuild the engine:
+1. Rebuild the engine so the image includes the current `.mmdb` files:
 
 ```bash
 docker compose up --build -d engine
 ```
 
-4. Run a real lookup:
+2. Run a real lookup:
 
 ```bash
 go run ./cmd/geoiplookup -ip 8.8.8.8

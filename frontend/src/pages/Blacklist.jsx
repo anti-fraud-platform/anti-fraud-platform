@@ -25,8 +25,8 @@ function Blacklist() {
         setError(null);
       } catch (err) {
         if (cancelled) return;
-        console.error('Error fetching blacklist:', err);
-        setError('Failed to load blacklist data');
+        console.error('Error fetching GeoIP policy blocks:', err);
+        setError('Failed to load GeoIP policy data');
 
         timer = setTimeout(fetchBlacklist, intervalMs);
       } finally {
@@ -68,7 +68,7 @@ function Blacklist() {
     const url = URL.createObjectURL(blob);
     
     link.setAttribute('href', url);
-    link.setAttribute('download', `blacklist_export_${new Date().toISOString().slice(0,10)}.csv`);
+    link.setAttribute('download', `geoip_policy_export_${new Date().toISOString().slice(0,10)}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -76,10 +76,10 @@ function Blacklist() {
   };
 
   return (
-    <Layout title="Blacklist" error={error}>
+    <Layout title="GeoIP / ASN Blocks" error={error}>
       <div className="flex justify-between items-center mb-4">
         <div className="text-sm text-text-muted">
-          {blacklistData.length > 0 && `Showing ${blacklistData.length} blocked IPs`}
+          {blacklistData.length > 0 && `Showing ${blacklistData.length} IPs blocked by GeoIP policy`}
         </div>
         <button
           onClick={exportToCSV}
@@ -112,7 +112,7 @@ function Blacklist() {
             ) : blacklistData.length === 0 ? (
               <tr>
                 <td colSpan="4" className="px-3.5 py-4 text-center text-text-muted">
-                  No blocked IPs found
+                  No GeoIP policy blocks found
                 </td>
               </tr>
             ) : (

@@ -12,7 +12,7 @@ function DetectionPipeline({ data }) {
     { label: 'User-Agent Check', badge: 1, reasons: ['suspicious_agent'], value: rb['suspicious_agent'] || 0, valueClass: 'text-text-main', accent: '#8b7cf6', pctClass: 'text-[#8b7cf6]' },
     { label: 'JS Challenge', badge: 2, reasons: JS_REASONS, value: jsBlocked, valueClass: 'text-text-main', accent: '#38bdf8', pctClass: 'text-[#38bdf8]' },
     { label: 'Header / Fingerprint', badge: 3, reasons: ['suspicious_headers'], value: rb['suspicious_headers'] || 0, valueClass: 'text-text-main', accent: '#22d3ee', pctClass: 'text-[#22d3ee]' },
-    { label: 'Static Blacklist', badge: 4, reasons: ['static_blacklist'], value: rb['static_blacklist'] || 0, valueClass: 'text-danger', accent: '#f0616d', pctClass: 'text-danger' },
+    { label: 'GeoIP / ASN Policy', badge: 4, reasons: ['geoip_policy'], value: rb['geoip_policy'] || 0, valueClass: 'text-danger', accent: '#f0616d', pctClass: 'text-danger' },
     { label: 'Rate Limiter', badge: 5, reasons: ['rate_limit_exceeded'], value: rb['rate_limit_exceeded'] || 0, valueClass: 'text-text-main', accent: '#fbbf24', pctClass: 'text-[#fbbf24]' },
     { label: 'Allowed', badge: null, reasons: [], value: allowed, valueClass: 'text-success', accent: '#34d399', pctClass: 'text-success' },
   ];
@@ -21,7 +21,7 @@ function DetectionPipeline({ data }) {
     { n: 1, label: 'User-Agent', color: '#8b7cf6' },
     { n: 2, label: 'JS Challenge', color: '#38bdf8' },
     { n: 3, label: 'Header Analysis', color: '#22d3ee' },
-    { n: 4, label: 'Blacklist', color: '#f0616d' },
+    { n: 4, label: 'GeoIP / ASN', color: '#f0616d' },
     { n: 5, label: 'Rate Limiter', color: '#fbbf24' },
     { n: null, label: 'Allowed', color: '#34d399' },
   ];

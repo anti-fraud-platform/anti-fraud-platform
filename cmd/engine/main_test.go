@@ -7,13 +7,12 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strconv"
 	"testing"
 	"time"
 
-	"anti-fraud/internal/bloom"
 	"anti-fraud/internal/challenge"
+	"anti-fraud/internal/geopolicy"
 	"anti-fraud/internal/logger"
 
 	"github.com/alicebob/miniredis/v2"
@@ -21,30 +20,31 @@ import (
 )
 
 func setupTestEngine(t *testing.T) func() {
-    t.Helper()
-    mr := miniredis.RunT(t)
-    rdb = redis.NewClient(&redis.Options{Addr: mr.Addr()})
-    challengeStore = &challenge.RedisStore{Client: rdb}
-    ipFilter = nil
-    batchLogger = logger.NewBatchLogger(nil, 100, 1000)
-    maxRate = 5
+	t.Helper()
+	mr := miniredis.RunT(t)
+	rdb = redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	challengeStore = &challenge.RedisStore{Client: rdb}
+	geoResolver = nil
+	geoPolicy = geopolicy.Config{}
+	batchLogger = logger.NewBatchLogger(nil, 100, 1000)
+	maxRate = 5
 
-    origChallenge := requireChallenge
-    origHeaderCheck := requireHeaderCheck
-    origDynThreshold := dynBlacklistThreshold
+	origChallenge := requireChallenge
+	origHeaderCheck := requireHeaderCheck
+	origDynThreshold := dynBlacklistThreshold
 
-    requireChallenge = false
-    requireHeaderCheck = false
-    dynBlacklistThreshold = 9999 // disable dynamic blacklist in tests
+	requireChallenge = false
+	requireHeaderCheck = false
+	dynBlacklistThreshold = 9999 // disable dynamic blacklist in tests
 
-    return func() {
+	return func() {
 		bgTasks.Wait()
-        requireChallenge = origChallenge
-        requireHeaderCheck = origHeaderCheck
-        dynBlacklistThreshold = origDynThreshold
-        _ = rdb.Close()
-        mr.Close()
-    }
+		requireChallenge = origChallenge
+		requireHeaderCheck = origHeaderCheck
+		dynBlacklistThreshold = origDynThreshold
+		_ = rdb.Close()
+		mr.Close()
+	}
 }
 
 func performClickRequest(method string, body string, headers map[string]string) *httptest.ResponseRecorder {
@@ -284,56 +284,6 @@ func TestClickIntegrationPipeline(t *testing.T) {
 	}
 }
 
-func TestHandleClickBloomFilterBlacklist(t *testing.T) {
-	// Doesn't call setupTestEngine (no Redis needed to reach the bloom
-	// filter step), so the Tier 1 toggles are disabled/restored here
-	// directly instead.
-	origChallenge := requireChallenge
-	origHeaderCheck := requireHeaderCheck
-	requireChallenge = false
-	requireHeaderCheck = false
-	defer func() {
-		requireChallenge = origChallenge
-		requireHeaderCheck = origHeaderCheck
-	}()
-
-	tmpFile, err := os.CreateTemp("", "test_dirty_ips_*.txt")
-	if err != nil {
-		t.Fatalf("Failed to create temp file: %v", err)
-	}
-	defer os.Remove(tmpFile.Name())
-
-	badIP := "99.99.99.99"
-	if _, err := tmpFile.WriteString(badIP + "\n"); err != nil {
-		t.Fatalf("Failed to write to temp file: %v", err)
-	}
-	tmpFile.Close()
-
-	var bloomError error
-	ipFilter, bloomError = bloom.NewIPFilter(tmpFile.Name())
-	if bloomError != nil {
-		t.Fatalf("Failed to initialize bloom filter for test: %v", bloomError)
-	}
-	defer func() { ipFilter = nil }()
-
-	batchLogger = nil
-
-	body := `{
-		"user_agent":"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
-		"campaign_id":"camp_bloom_test",
-		"timestamp":123456789
-	}`
-
-	rr := performClickRequest(http.MethodPost, body, map[string]string{
-		"Content-Type":    "application/json",
-		"X-Forwarded-For": badIP,
-	})
-
-	if rr.Code != http.StatusForbidden {
-		t.Errorf("Expected status 403 Forbidden for blacklisted IP, got %d, body: %s", rr.Code, rr.Body.String())
-	}
-}
-
 func TestHandleClickIgnoresSpoofedBodyIP(t *testing.T) {
 	cleanup := setupTestEngine(t)
 	defer cleanup()
@@ -367,70 +317,71 @@ func TestHandleClickIgnoresSpoofedBodyIP(t *testing.T) {
 }
 
 func TestHandleClickSelfHealsKeyMissingTTL(t *testing.T) {
-    mr := miniredis.RunT(t)
-    rdb = redis.NewClient(&redis.Options{Addr: mr.Addr()})
-    defer rdb.Close()
+	mr := miniredis.RunT(t)
+	rdb = redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer rdb.Close()
 
-    ipFilter = nil
-    batchLogger = logger.NewBatchLogger(nil, 100, 1000)
-    maxRate = 5
+	geoResolver = nil
+	geoPolicy = geopolicy.Config{}
+	batchLogger = logger.NewBatchLogger(nil, 100, 1000)
+	maxRate = 5
 
-    origChallenge := requireChallenge
-    origHeaderCheck := requireHeaderCheck
-    requireChallenge = false
-    requireHeaderCheck = false
-    defer func() {
-        requireChallenge = origChallenge
-        requireHeaderCheck = origHeaderCheck
-    }()
+	origChallenge := requireChallenge
+	origHeaderCheck := requireHeaderCheck
+	requireChallenge = false
+	requireHeaderCheck = false
+	defer func() {
+		requireChallenge = origChallenge
+		requireHeaderCheck = origHeaderCheck
+	}()
 
-    ip := "5.5.5.5"
-    body := `{"user_agent":"test-agent","campaign_id":"camp_self_heal","timestamp":123456789}`
-    rr := performClickRequest(http.MethodPost, body, map[string]string{
-        "Content-Type":    "application/json",
-        "X-Forwarded-For": ip,
-    })
-    if rr.Code != http.StatusOK {
-        t.Fatalf("expected first request to succeed, got %d", rr.Code)
-    }
+	ip := "5.5.5.5"
+	body := `{"user_agent":"test-agent","campaign_id":"camp_self_heal","timestamp":123456789}`
+	rr := performClickRequest(http.MethodPost, body, map[string]string{
+		"Content-Type":    "application/json",
+		"X-Forwarded-For": ip,
+	})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected first request to succeed, got %d", rr.Code)
+	}
 
-    req := httptest.NewRequest(http.MethodPost, "/v1/click", bytes.NewReader([]byte(body)))
-    req.Header.Set("Content-Type", "application/json")
-    req.Header.Set("X-Forwarded-For", ip)
-    req.Header.Set("User-Agent", "test-agent")
-    fp := fingerprint(req)
-    key := fmt.Sprintf("%s%s", rateKeyPrefix, fp)
+	req := httptest.NewRequest(http.MethodPost, "/v1/click", bytes.NewReader([]byte(body)))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Forwarded-For", ip)
+	req.Header.Set("User-Agent", "test-agent")
+	fp := fingerprint(req)
+	key := fmt.Sprintf("%s%s", rateKeyPrefix, fp)
 
-    mr.Set(key, "999")
-    if mr.TTL(key) != 0 {
-        t.Fatalf("test setup invalid: expected no TTL, got %v", mr.TTL(key))
-    }
+	mr.Set(key, "999")
+	if mr.TTL(key) != 0 {
+		t.Fatalf("test setup invalid: expected no TTL, got %v", mr.TTL(key))
+	}
 
-    rr = performClickRequest(http.MethodPost, body, map[string]string{
-        "Content-Type":    "application/json",
-        "X-Forwarded-For": ip,
-        "User-Agent":      "test-agent",
-    })
-    if rr.Code != http.StatusTooManyRequests {
-        t.Fatalf("expected 429 on second request, got %d", rr.Code)
-    }
-    if mr.TTL(key) <= 0 {
-        t.Fatalf("expected ExpireNX to have attached a TTL to the previously-stuck key, got %v", mr.TTL(key))
-    }
+	rr = performClickRequest(http.MethodPost, body, map[string]string{
+		"Content-Type":    "application/json",
+		"X-Forwarded-For": ip,
+		"User-Agent":      "test-agent",
+	})
+	if rr.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected 429 on second request, got %d", rr.Code)
+	}
+	if mr.TTL(key) <= 0 {
+		t.Fatalf("expected ExpireNX to have attached a TTL to the previously-stuck key, got %v", mr.TTL(key))
+	}
 
-    mr.FastForward(2 * time.Second)
-    if mr.Exists(key) {
-        t.Fatalf("expected key to have expired after TTL elapsed, but it still exists")
-    }
+	mr.FastForward(2 * time.Second)
+	if mr.Exists(key) {
+		t.Fatalf("expected key to have expired after TTL elapsed, but it still exists")
+	}
 
-    rr = performClickRequest(http.MethodPost, body, map[string]string{
-        "Content-Type":    "application/json",
-        "X-Forwarded-For": ip,
-        "User-Agent":      "test-agent",
-    })
-    if rr.Code != http.StatusOK {
-        t.Fatalf("expected request to be allowed after key expired and reset, got %d", rr.Code)
-    }
+	rr = performClickRequest(http.MethodPost, body, map[string]string{
+		"Content-Type":    "application/json",
+		"X-Forwarded-For": ip,
+		"User-Agent":      "test-agent",
+	})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected request to be allowed after key expired and reset, got %d", rr.Code)
+	}
 }
 func TestHandleClickSuspiciousAgentDetection(t *testing.T) {
 	cleanup := setupTestEngine(t)
@@ -558,7 +509,7 @@ func TestHandleClickChallengeSolvedCorrectlyIsAllowed(t *testing.T) {
 		// Must set a normal UA — an empty User-Agent trips
 		// isSuspiciousUserAgent at step 1, before the challenge check
 		// (step 2) ever runs, which would flag this for the wrong reason.
-"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+		"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
 	})
 
 	if rr.Code != http.StatusOK {
@@ -611,9 +562,8 @@ func TestHandleClickChallengeReplayIsRejected(t *testing.T) {
 		"X-Forwarded-For": "50.50.50.5",
 		// See comment in TestHandleClickChallengeSolvedCorrectlyIsAllowed —
 		// empty UA would flag this at step 1 for the wrong reason.
-"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-
-}
+		"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+	}
 
 	first := performClickRequest(http.MethodPost, body, headers)
 	if status := decodeClickStatus(t, first); status != "success" {
@@ -631,34 +581,34 @@ func TestHandleClickChallengeReplayIsRejected(t *testing.T) {
 // ============================================================================
 
 func TestHandleClickHeaderHeuristicFlagsBareRequest(t *testing.T) {
-    cleanup := setupTestEngine(t)
-    defer cleanup()
-    requireChallenge = false // isolate: only testing the header layer here
-    requireHeaderCheck = true
+	cleanup := setupTestEngine(t)
+	defer cleanup()
+	requireChallenge = false // isolate: only testing the header layer here
+	requireHeaderCheck = true
 
-    body := `{"campaign_id":"camp_header_bare"}`
+	body := `{"campaign_id":"camp_header_bare"}`
 
-    // 1. Request with only suspicious headers (no UA) – should NOT be flagged (score 2 < 3)
-    rr := performClickRequest(http.MethodPost, body, map[string]string{
-        "Content-Type":    "application/json",
-        "X-Forwarded-For": "60.60.60.1",
-        "User-Agent":      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-        // no Accept-Language, no Sec-Fetch-*, no Client Hints → triggers headers heuristic
-    })
-    if status := decodeClickStatus(t, rr); status != "success" {
-        t.Fatalf("expected request with only headers (score 2) to pass, got %q", status)
-    }
+	// 1. Request with only suspicious headers (no UA) – should NOT be flagged (score 2 < 3)
+	rr := performClickRequest(http.MethodPost, body, map[string]string{
+		"Content-Type":    "application/json",
+		"X-Forwarded-For": "60.60.60.1",
+		"User-Agent":      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+		// no Accept-Language, no Sec-Fetch-*, no Client Hints → triggers headers heuristic
+	})
+	if status := decodeClickStatus(t, rr); status != "success" {
+		t.Fatalf("expected request with only headers (score 2) to pass, got %q", status)
+	}
 
-    // 2. Request with suspicious headers + suspicious UA – should be flagged (score 4 >= 3)
-    rr = performClickRequest(http.MethodPost, body, map[string]string{
-        "Content-Type":    "application/json",
-        "X-Forwarded-For": "60.60.60.1",
-        "User-Agent":      "curl/8.5.0", // triggers UA check
-        // still no Accept-Language etc., triggers headers heuristic
-    })
-    if status := decodeClickStatus(t, rr); status != "flagged" {
-        t.Fatalf("expected request with headers + UA (score 4) to be flagged, got %q", status)
-    }
+	// 2. Request with suspicious headers + suspicious UA – should be flagged (score 4 >= 3)
+	rr = performClickRequest(http.MethodPost, body, map[string]string{
+		"Content-Type":    "application/json",
+		"X-Forwarded-For": "60.60.60.1",
+		"User-Agent":      "curl/8.5.0", // triggers UA check
+		// still no Accept-Language etc., triggers headers heuristic
+	})
+	if status := decodeClickStatus(t, rr); status != "flagged" {
+		t.Fatalf("expected request with headers + UA (score 4) to be flagged, got %q", status)
+	}
 }
 
 // This is the integration-level regression test for the Accept:"*/*" bug
