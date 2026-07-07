@@ -12,4 +12,17 @@ if [ -z "${UPSTREAM_RESOLVER:-}" ]; then
   exit 1
 fi
 
+# nginx accepts IPv6 resolvers in bracketed form. Railway can expose the
+# first nameserver from /etc/resolv.conf as a raw IPv6 literal such as
+# fd12::10, so normalize it before envsubst renders the final config.
+case "$UPSTREAM_RESOLVER" in
+  *:*)
+    case "$UPSTREAM_RESOLVER" in
+      \[*\]) ;;
+      *) UPSTREAM_RESOLVER="[$UPSTREAM_RESOLVER]" ;;
+    esac
+    export UPSTREAM_RESOLVER
+    ;;
+esac
+
 exec /docker-entrypoint.sh "$@"
