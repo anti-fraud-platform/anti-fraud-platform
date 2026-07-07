@@ -26,6 +26,8 @@ services:
       GEOIP_BLOCKED_ASN_KEYWORDS: "digitalocean,cloudflare,hetzner,ovh,linode,vultr,choopa,contabo,scaleway,oracle,amazon technologies,microsoft azure,google cloud"
       REQUIRE_JS_CHALLENGE: "true"
       REQUIRE_HEADER_CHECK: "true"
+    volumes:
+      - ./geoip:/usr/share/GeoIP:ro
 
     expose:
       - "8080"
