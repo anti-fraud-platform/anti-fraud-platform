@@ -107,7 +107,7 @@ ANALYTICS_UPSTREAM=analytics.railway.internal:8081
 ENGINE_UPSTREAM=engine.railway.internal:8080
 ```
 
-`UPSTREAM_RESOLVER` is optional. If you do not set it, the container now auto-detects the nameserver from `/etc/resolv.conf`.
+`UPSTREAM_RESOLVER` is optional. If you do not set it, the container auto-detects the nameserver from `/etc/resolv.conf`. Raw IPv6 resolvers are normalized to nginx-safe bracketed form automatically.
 
 Generate a public domain for this service. This is the main public entrypoint.
 Railway injects `PORT` automatically for public services. Do not hardcode it to `80`.
@@ -124,7 +124,7 @@ Service variables:
 ENGINE_UPSTREAM=engine.railway.internal:8080
 ```
 
-`UPSTREAM_RESOLVER` is optional here too. The container auto-detects it on startup.
+`UPSTREAM_RESOLVER` is optional here too. The container auto-detects it on startup and normalizes raw IPv6 values automatically.
 
 Generate a public domain for it.
 
