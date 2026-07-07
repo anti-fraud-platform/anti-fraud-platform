@@ -1,6 +1,8 @@
 server {
     listen ${PORT};
     server_name _;
+    resolver ${NGINX_LOCAL_RESOLVERS} valid=30s ipv6=off;
+    resolver_timeout 5s;
 
     location = / {
         root /usr/share/nginx/html;
