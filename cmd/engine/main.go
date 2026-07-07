@@ -85,11 +85,11 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	redisHost := getEnv("REDIS_HOST", "localhost")
-	redisPort := getEnv("REDIS_PORT", "6379")
-	rdb = redis.NewClient(&redis.Options{
-		Addr: fmt.Sprintf("%s:%s", redisHost, redisPort),
-	})
+	redisOptions, err := loadRedisOptions()
+	if err != nil {
+		log.Fatalf("Failed to configure Redis client: %v", err)
+	}
+	rdb = redis.NewClient(redisOptions)
 	if err := rdb.Ping(ctx).Err(); err != nil {
 		log.Fatalf("Failed to connect to Redis: %v", err)
 	}
@@ -108,7 +108,6 @@ func main() {
 	connStr := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
 		dbHost, dbPort, dbUser, dbPassword, dbName)
 
-	var err error
 	db, err = sql.Open("postgres", connStr)
 	if err != nil {
 		log.Fatalf("Failed to open DB connection: %v", err)
@@ -170,6 +169,34 @@ func loadFeatureToggles() {
 		}
 	}
 	log.Printf("Feature toggles: REQUIRE_JS_CHALLENGE=%v REQUIRE_HEADER_CHECK=%v", requireChallenge, requireHeaderCheck)
+}
+
+func loadRedisOptions() (*redis.Options, error) {
+	if redisURL := os.Getenv("REDIS_URL"); redisURL != "" {
+		return redis.ParseURL(redisURL)
+	}
+
+	redisHost := getEnv("REDIS_HOST", "localhost")
+	redisPort := getEnv("REDIS_PORT", "6379")
+
+	username := os.Getenv("REDIS_USERNAME")
+	if username == "" {
+		username = os.Getenv("REDIS_USER")
+	}
+	if username == "" {
+		username = os.Getenv("REDISUSER")
+	}
+
+	password := os.Getenv("REDIS_PASSWORD")
+	if password == "" {
+		password = os.Getenv("REDISPASSWORD")
+	}
+
+	return &redis.Options{
+		Addr:     fmt.Sprintf("%s:%s", redisHost, redisPort),
+		Username: username,
+		Password: password,
+	}, nil
 }
 
 // parses and checks if the given user agent falls into known script signatures

@@ -24,7 +24,6 @@ Optional:
 - `Dockerfile.engine` now copies `dirty_ips.txt` into the image at `/app/data/dirty_ips.txt`
 - `frontend` nginx config now uses runtime env variables instead of hardcoded upstream names
 - `Dockerfile.nginx-engine` was added for a separate simulator service on Railway
-- Railway nginx templates now use an explicit DNS resolver so private Railway hostnames can be resolved at request time
 
 ## Recommended service layout
 
@@ -55,6 +54,8 @@ DB_PASSWORD=${{Postgres.PGPASSWORD}}
 DB_NAME=${{Postgres.PGDATABASE}}
 REDIS_HOST=${{Redis.REDISHOST}}
 REDIS_PORT=${{Redis.REDISPORT}}
+REDIS_USER=${{Redis.REDISUSER}}
+REDIS_PASSWORD=${{Redis.REDISPASSWORD}}
 DB_BATCH_SIZE=1000
 DB_BATCH_FLUSH_MS=500
 DB_MAX_OPEN_CONNS=80
