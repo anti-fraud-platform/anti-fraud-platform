@@ -31,15 +31,10 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: Build Go packages
-        run: go build ./...
-      - name: Run Go tests
-        run: go test $(go list ./... | grep -v frontend) -race -count=1
+        run: make ci-backend
 
   frontend:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -49,9 +44,55 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - name: Install frontend dependencies
-        run: npm ci --no-audit --no-fund
-      - name: Run frontend lint
-        run: npm run lint
-      - name: Build frontend
-        run: npm run build
+      - name: Build frontend pipeline
+        run: make ci-frontend
+      - name: Upload frontend build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+          if-no-files-found: error
+          retention-days: 7
+
+  govulncheck:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Run govulncheck
+        run: make ci-govulncheck
+
+  integration:
+    runs-on: ubuntu-latest
+    needs:
+      - backend
+      - frontend
+      - govulncheck
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Build and boot full stack
+        run: make ci-compose-up
+      - name: Run compose smoke checks
+        run: make ci-compose-smoke
+      - name: Dump compose state on failure
+        if: failure()
+        run: |
+          docker compose ps
+          docker compose logs --no-color > compose-logs.txt
+      - name: Upload compose logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compose-logs
+          path: compose-logs.txt
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Tear down stack
+        if: always()
+        run: make ci-compose-down

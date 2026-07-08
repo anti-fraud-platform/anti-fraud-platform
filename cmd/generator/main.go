@@ -3,9 +3,12 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"math/rand"
 	"net/http"
 	"os"
@@ -19,11 +22,31 @@ import (
 
 // ClickEvent mirrors the payload expected by POST /v1/click
 type ClickEvent struct {
-	IP         string `json:"ip"`
-	UserAgent  string `json:"user_agent"`
-	CampaignID string `json:"campaign_id"`
-	Timestamp  int64  `json:"timestamp"`
+	IP             string `json:"ip"`
+	UserAgent      string `json:"user_agent"`
+	CampaignID     string `json:"campaign_id"`
+	Timestamp      int64  `json:"timestamp"`
+	ChallengeID    string `json:"challenge_id,omitempty"`
+	ChallengeToken string `json:"challenge_token,omitempty"`
 }
+
+// challengeResponse mirrors internal/challenge.Challenge's JSON shape.
+type challengeResponse struct {
+	ChallengeID string `json:"challenge_id"`
+	Nonce       string `json:"nonce"`
+	IssuedAtMS  int64  `json:"issued_at"`
+}
+
+// clickResponse mirrors the {"status": "...", "message": "..."} /
+// {"error": "..."} bodies the engine returns. Only "status" matters for
+// counting; a 200 with status=="flagged" is NOT a clean click.
+type clickResponse struct {
+	Status string `json:"status"`
+	Error  string `json:"error"`
+}
+
+// challengeSalt MUST match challenge.Salt in internal/challenge/challenge.go.
+const challengeSalt = "af-js-check-v1"
 
 // --- random data pools ---
 
@@ -36,6 +59,16 @@ var userAgents = []string{
 	"curl/8.6.0",
 	"Go-http-client/1.1",
 	"bot/2.0 (+http://example.com/bot)",
+}
+
+// browserUserAgents is the subset above that's plausible for the
+// browser-headers profile (real browser UA strings only — pairing a
+// "curl/8.6.0" UA with full Sec-Ch-Ua/Sec-Fetch-* headers isn't a
+// realistic bot shape, it's a contradiction).
+var browserUserAgents = []string{
+	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+	"Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
+	"Mozilla/5.0 (X11; Linux x86_64; rv:125.0) Gecko/20100101 Firefox/125.0",
 }
 
 var campaignIDs = []string{
@@ -52,11 +85,10 @@ func randomIP(rng *rand.Rand) string {
 	)
 }
 
-// loadBlacklistIPs reads one IP per line from path. Blank lines and
-// "#" comments are skipped. Used to inject real known-bad IPs into
-// the simulated traffic stream so we can prove the Bloom filter
-// drops them.
-func loadBlacklistIPs(path string) ([]string, error) {
+// loadIPPool reads one IP per line from path. Blank lines and "#"
+// comments are skipped. Used to inject a controlled set of public IPs
+// into the stream for GeoIP / ASN policy demos.
+func loadIPPool(path string) ([]string, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -75,13 +107,21 @@ func loadBlacklistIPs(path string) ([]string, error) {
 	return ips, scanner.Err()
 }
 
+// computeChallengeToken mirrors challenge.ComputeToken exactly:
+// sha256(nonce + ":" + Salt), hex-encoded.
+func computeChallengeToken(nonce string) string {
+	sum := sha256.Sum256([]byte(nonce + ":" + challengeSalt))
+	return hex.EncodeToString(sum[:])
+}
+
 // --- traffic profile ---
-// Controls how each event is generated. This is what lets us move
-// beyond simple "random everything" traffic into the more realistic
-// and more dangerous patterns real fraud actually looks like.
+// Controls how each event is generated and which headers accompany it.
+// This is what lets us move beyond "everything looks like a bot" into a
+// gradient of sophistication: naive bot -> bot that solves the JS
+// challenge -> full browser-shaped legit traffic.
 type profile struct {
-	blacklistIPs    []string // pool of real dirty IPs, loaded from file
-	blacklistChance float64  // 0.0–1.0, probability a given request uses one
+	policyIPs    []string // pool of public IPs used for GeoIP / ASN policy demos
+	policyChance float64  // 0.0–1.0, probability a given request uses one
 
 	stickyUA bool   // if true, every request from this worker reuses one User-Agent
 	fixedUA  string // the User-Agent picked once, reused (set when stickyUA is true)
@@ -90,22 +130,31 @@ type profile struct {
 
 	floodCampaign string // distributed fraud: hammer one campaign ID from many IPs
 	jitterMaxMs   int    // organic-looking random delay added on top of the base interval
+
+	// --- Tier 1 detection profile ---
+	solveChallenge bool   // fetch GET /v1/challenge and solve it before every click
+	browserHeaders bool   // send Accept-Language/Accept-Encoding/Sec-Fetch-*/Sec-Ch-Ua like a real browser
+	challengeURL   string // derived from -target; only used if solveChallenge is true
 }
 
-func randomEvent(rng *rand.Rand, p *profile, isBlacklisted *bool) ClickEvent {
+func randomEvent(rng *rand.Rand, p *profile, isPolicyIP *bool) ClickEvent {
 	ip := p.fixedIP
 	if ip == "" {
-		// occasionally inject a real blacklisted IP instead of a random one
-		if len(p.blacklistIPs) > 0 && rng.Float64() < p.blacklistChance {
-			ip = p.blacklistIPs[rng.Intn(len(p.blacklistIPs))]
-			*isBlacklisted = true
+		if len(p.policyIPs) > 0 && rng.Float64() < p.policyChance {
+			ip = p.policyIPs[rng.Intn(len(p.policyIPs))]
+			*isPolicyIP = true
 		} else {
 			ip = randomIP(rng)
-			*isBlacklisted = false
+			*isPolicyIP = false
 		}
 	}
 
-	ua := userAgents[rng.Intn(len(userAgents))]
+	var ua string
+	if p.browserHeaders {
+		ua = browserUserAgents[rng.Intn(len(browserUserAgents))]
+	} else {
+		ua = userAgents[rng.Intn(len(userAgents))]
+	}
 	if p.stickyUA {
 		ua = p.fixedUA
 	}
@@ -123,17 +172,66 @@ func randomEvent(rng *rand.Rand, p *profile, isBlacklisted *bool) ClickEvent {
 	}
 }
 
+// fetchChallenge solves a fresh GET /v1/challenge and returns the id/token
+// pair to attach to the click. Returns zero values (and logs nothing — the
+// caller just sends an unsolved click, which is exactly what we want to
+// demonstrate getting flagged) on any error.
+func fetchChallenge(client *http.Client, challengeURL string) (id, token string, ok bool) {
+	resp, err := client.Get(challengeURL)
+	if err != nil {
+		return "", "", false
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", "", false
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", "", false
+	}
+
+	var ch challengeResponse
+	if err := json.Unmarshal(body, &ch); err != nil {
+		return "", "", false
+	}
+
+	// Respect the server's MinSolveDelay (150ms) — a "smart" simulated bot
+	// still has to wait, same as challenge.Validate enforces server-side.
+	// Sleeping here (instead of racing the check) is what actually lets
+	// this profile demonstrate passing check #2 while still potentially
+	// failing check #3 (headers) — that's the interesting demo case.
+	time.Sleep(200 * time.Millisecond)
+
+	return ch.ChallengeID, computeChallengeToken(ch.Nonce), true
+}
+
+// deriveChallengeURL turns ".../v1/click" into ".../v1/challenge". If the
+// target doesn't end in /v1/click, falls back to appending /v1/challenge
+// to the scheme+host portion — good enough for the default target shape.
+func deriveChallengeURL(target string) string {
+	if strings.HasSuffix(target, "/v1/click") {
+		return strings.TrimSuffix(target, "/v1/click") + "/v1/challenge"
+	}
+	return target + "/../v1/challenge"
+}
+
 // --- counters ---
 // Separate atomic counters per outcome so the final report can show
-// exactly which defense layer caught each blocked request — this is
-// what lets QA cross-check these numbers against the dashboard.
+// exactly which defense layer caught each blocked request. "flagged"
+// covers every check that responds HTTP 200 with status=="flagged"
+// (suspicious_agent, no_js_challenge, challenge_too_fast,
+// challenge_mismatch, suspicious_headers) — these used to be silently
+// miscounted as "ok" because only the HTTP status code was checked.
 
 type counters struct {
-	sent        atomic.Int64 // every request attempted
-	ok          atomic.Int64 // HTTP 200–299 (clean click, passed through)
-	blocked     atomic.Int64 // HTTP 429 (Redis rate limiter)
-	blacklisted atomic.Int64 // HTTP 403 (Bloom filter blacklist)
-	errs        atomic.Int64 // network errors or unexpected status codes
+	sent       atomic.Int64 // every request attempted
+	ok         atomic.Int64 // HTTP 200 AND status=="success" — an actually clean, allowed click
+	flagged    atomic.Int64 // HTTP 200 AND status=="flagged" — caught by UA/challenge/header checks
+	blocked    atomic.Int64 // HTTP 429 (Redis rate limiter)
+	geoBlocked atomic.Int64 // HTTP 403 (GeoIP / ASN policy)
+	errs       atomic.Int64 // network errors, non-JSON bodies, or unexpected status codes
 }
 
 // --- worker ---
@@ -155,8 +253,19 @@ func worker(
 	for time.Now().Before(deadline) {
 		start := time.Now()
 
-		var injectedBlacklist bool
-		event := randomEvent(rng, p, &injectedBlacklist)
+		var injectedPolicyIP bool
+		event := randomEvent(rng, p, &injectedPolicyIP)
+
+		if p.solveChallenge {
+			id, token, ok := fetchChallenge(client, p.challengeURL)
+			if ok {
+				event.ChallengeID = id
+				event.ChallengeToken = token
+			}
+			// If !ok, event is sent without challenge fields — same as a
+			// bot that doesn't know the flow exists at all.
+		}
+
 		body, _ := json.Marshal(event)
 
 		// The engine identifies the caller via the X-Forwarded-For
@@ -170,6 +279,21 @@ func worker(
 		}
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-Forwarded-For", event.IP)
+		req.Header.Set("User-Agent", event.UserAgent)
+
+		if p.browserHeaders {
+			// Mirrors what a real Chromium browser sends by default on a
+			// same-origin fetch(). Deliberately does NOT set Accept — see
+			// internal/headercheck's correctness note on why "Accept: */*"
+			// (the fetch() default) must never be penalized.
+			req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+			req.Header.Set("Accept-Encoding", "gzip, deflate, br")
+			req.Header.Set("Sec-Fetch-Site", "same-origin")
+			req.Header.Set("Sec-Fetch-Mode", "cors")
+			if strings.Contains(strings.ToLower(event.UserAgent), "chrome") {
+				req.Header.Set("Sec-Ch-Ua", `"Chromium";v="124", "Google Chrome";v="124"`)
+			}
+		}
 
 		resp, err := client.Do(req)
 		c.sent.Add(1)
@@ -177,22 +301,29 @@ func worker(
 		if err != nil {
 			c.errs.Add(1)
 		} else {
+			respBody, readErr := io.ReadAll(resp.Body)
 			resp.Body.Close()
+
 			switch resp.StatusCode {
 			case http.StatusOK:
-				c.ok.Add(1)
+				var cr clickResponse
+				if readErr == nil && json.Unmarshal(respBody, &cr) == nil && cr.Status == "success" {
+					c.ok.Add(1)
+				} else {
+					// status == "flagged", or a body we couldn't parse as
+					// the expected shape — either way this was NOT a clean
+					// click and must not be counted as one.
+					c.flagged.Add(1)
+				}
 			case http.StatusTooManyRequests: // 429 — Redis rate limiter
 				c.blocked.Add(1)
-			case http.StatusForbidden: // 403 — Bloom filter blacklist
-				c.blacklisted.Add(1)
+			case http.StatusForbidden: // 403 — GeoIP / ASN policy
+				c.geoBlocked.Add(1)
 			default:
 				c.errs.Add(1)
 			}
 		}
 
-		// Base pacing to hit the target rps, optionally with extra
-		// random jitter layered on top to mimic a "smart" bot that
-		// avoids a perfectly mechanical, easily-fingerprinted rhythm.
 		elapsed := time.Since(start)
 		sleep := interval - elapsed
 		if p.jitterMaxMs > 0 {
@@ -209,11 +340,12 @@ func worker(
 func printReport(target string, mode string, c *counters, elapsed float64) {
 	total := c.sent.Load()
 	ok := c.ok.Load()
+	flagged := c.flagged.Load()
 	blocked := c.blocked.Load()
-	blacklisted := c.blacklisted.Load()
+	geoBlocked := c.geoBlocked.Load()
 	errs := c.errs.Load()
 
-	caught := blocked + blacklisted
+	caught := flagged + blocked + geoBlocked
 	var efficiency float64
 	if total > 0 {
 		efficiency = float64(caught) / float64(total) * 100
@@ -228,13 +360,20 @@ func printReport(target string, mode string, c *counters, elapsed float64) {
 	fmt.Printf("  Duration            : %.1fs\n", elapsed)
 	fmt.Println("------------------------------")
 	fmt.Printf("  Total Requests Sent : %d\n", total)
-	fmt.Printf("  Clean Clicks (200)  : %d\n", ok)
-	fmt.Printf("  Rate-Limit Hits(429): %d\n", blocked)
-	fmt.Printf("  Blacklist Hits (403): %d\n", blacklisted)
-	fmt.Printf("  Errors (other)      : %d\n", errs)
+	fmt.Printf("  Clean Clicks (200 success)     : %d\n", ok)
+	fmt.Printf("  Flagged (200 flagged)          : %d\n", flagged)
+	fmt.Printf("  Rate-Limit Hits (429)          : %d\n", blocked)
+	fmt.Printf("  GeoIP / ASN Blocks (403)       : %d\n", geoBlocked)
+	fmt.Printf("  Errors (other)                 : %d\n", errs)
 	fmt.Println("------------------------------")
 	fmt.Printf("  Overall Catch Rate  : %.1f%%\n", efficiency)
 	fmt.Println("==============================")
+	if flagged > 0 {
+		fmt.Println("  Note: 'Flagged' clicks were caught by suspicious_agent,")
+		fmt.Println("  no_js_challenge, challenge_too_fast, challenge_mismatch,")
+		fmt.Println("  or suspicious_headers. Check /v1/analytics/stats'")
+		fmt.Println("  reason_breakdown for which specific layer caught them.")
+	}
 }
 
 // --- main ---
@@ -248,30 +387,43 @@ func main() {
 	attack := flag.Bool("attack", false, "Attack mode: one fixed IP at 100 rps per worker")
 	attackIP := flag.String("attack-ip", "1.2.3.4", "Fixed IP used in attack mode")
 
-	blacklistFile := flag.String("blacklist-file", "deployments/blacklists/dirty_ips.txt", "Path to known-bad IP list")
-	blacklistChance := flag.Float64("blacklist-chance", 0.0, "Probability (0.0-1.0) a request uses a real blacklisted IP")
+	policyIPFile := flag.String("policy-ip-file", "", "Path to a public-IP pool used for GeoIP / ASN policy demos")
+	policyChance := flag.Float64("policy-ip-chance", 0.0, "Probability (0.0-1.0) a request uses an IP from -policy-ip-file")
 
 	stickyUA := flag.Bool("sticky-ua", false, "Distributed fraud: keep one User-Agent across many IPs")
 	floodCampaign := flag.String("flood-campaign", "", "Distributed fraud: hammer this single campaign ID from many IPs")
 	jitterMs := flag.Int("jitter-ms", 0, "Add up to this many ms of random delay per request (mimics organic timing)")
 
+	solveChallenge := flag.Bool("solve-challenge", false, "Fetch and solve the JS-execution challenge before each click (simulates a more sophisticated bot)")
+	browserHeaders := flag.Bool("browser-headers", false, "Send realistic browser headers (Accept-Language/Accept-Encoding/Sec-Fetch-*/Sec-Ch-Ua)")
+	challengeURLFlag := flag.String("challenge-url", "", "Override the derived /v1/challenge URL (default: derived from -target)")
+
 	flag.Parse()
 
 	p := &profile{
-		blacklistChance: *blacklistChance,
-		stickyUA:        *stickyUA,
-		floodCampaign:   *floodCampaign,
-		jitterMaxMs:     *jitterMs,
+		policyChance:   *policyChance,
+		stickyUA:       *stickyUA,
+		floodCampaign:  *floodCampaign,
+		jitterMaxMs:    *jitterMs,
+		solveChallenge: *solveChallenge,
+		browserHeaders: *browserHeaders,
 	}
 
-	// load real blacklisted IPs if requested
-	if *blacklistChance > 0 {
-		ips, err := loadBlacklistIPs(*blacklistFile)
-		if err != nil {
-			fmt.Printf("⚠️  Could not load blacklist file (%v) — continuing without blacklist injection\n", err)
+	if p.solveChallenge {
+		if *challengeURLFlag != "" {
+			p.challengeURL = *challengeURLFlag
 		} else {
-			p.blacklistIPs = ips
-			fmt.Printf("Loaded %d blacklisted IPs from %s\n", len(ips), *blacklistFile)
+			p.challengeURL = deriveChallengeURL(*target)
+		}
+	}
+
+	if *policyChance > 0 && *policyIPFile != "" {
+		ips, err := loadIPPool(*policyIPFile)
+		if err != nil {
+			fmt.Printf("⚠️  Could not load policy IP file (%v) — continuing without GeoIP policy injection\n", err)
+		} else {
+			p.policyIPs = ips
+			fmt.Printf("Loaded %d policy IPs from %s\n", len(ips), *policyIPFile)
 		}
 	}
 
@@ -287,13 +439,25 @@ func main() {
 	if *floodCampaign != "" {
 		mode += "+CAMPAIGN_FLOOD"
 	}
-	if *blacklistChance > 0 {
-		mode += "+BLACKLIST_INJECT"
+	if *policyChance > 0 && *policyIPFile != "" {
+		mode += "+GEOIP_POLICY_IPS"
+	}
+	if *solveChallenge {
+		mode += "+SOLVES_CHALLENGE"
+	}
+	if *browserHeaders {
+		mode += "+BROWSER_HEADERS"
+	}
+	if !*solveChallenge && !*browserHeaders {
+		mode += "+NAIVE_BOT" // default shape: no challenge, minimal headers — the realistic unlabeled bot
 	}
 
 	fmt.Printf("🔀 MODE: %s — %d workers × %d rps = %d rps total\n", mode, *workers, *rps, *workers**rps)
-	fmt.Printf("   target:   %s\n", *target)
-	fmt.Printf("   duration: %s\n\n", *dur)
+	fmt.Printf("   target:      %s\n", *target)
+	if p.solveChallenge {
+		fmt.Printf("   challenge:   %s\n", p.challengeURL)
+	}
+	fmt.Printf("   duration:    %s\n\n", *dur)
 
 	client := &http.Client{Timeout: 5 * time.Second}
 
@@ -307,14 +471,13 @@ func main() {
 		wg.Add(1)
 		rng := rand.New(rand.NewSource(time.Now().UnixNano() + int64(i)))
 
-		// Each worker gets its own copy of the profile so that
-		// stickyUA can pick one User-Agent PER WORKER (simulating
-		// many distinct bot instances, each consistent with itself
-		// but different from the others) rather than one UA shared
-		// globally across all workers.
 		workerProfile := *p
 		if p.stickyUA {
-			workerProfile.fixedUA = userAgents[rng.Intn(len(userAgents))]
+			if p.browserHeaders {
+				workerProfile.fixedUA = browserUserAgents[rng.Intn(len(browserUserAgents))]
+			} else {
+				workerProfile.fixedUA = userAgents[rng.Intn(len(userAgents))]
+			}
 		}
 
 		go worker(*target, client, rng, &workerProfile, *rps, deadline, &c, &wg)
@@ -325,8 +488,8 @@ func main() {
 		prev := int64(0)
 		for range ticker.C {
 			cur := c.sent.Load()
-			fmt.Printf("\r  sent: %-8d  ok: %-8d  429: %-8d  403: %-8d  rps: %-6d",
-				cur, c.ok.Load(), c.blocked.Load(), c.blacklisted.Load(), cur-prev)
+			fmt.Printf("\r  sent: %-8d  ok: %-8d  flagged: %-8d  429: %-8d  403: %-8d  rps: %-6d",
+				cur, c.ok.Load(), c.flagged.Load(), c.blocked.Load(), c.geoBlocked.Load(), cur-prev)
 			prev = cur
 		}
 	}()

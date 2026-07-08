@@ -1,44 +1,50 @@
+import { MousePointerClick, ShieldAlert, CheckCircle, Flag } from 'lucide-react';
 import Layout from '../components/Layout';
 import { useStats } from '../hooks/useStats';
 import StatCard from '../components/StatCard';
 import SkeletonCard from '../components/SkeletonCard';
-import SkeletonChart from '../components/SkeletonChart';
+import ReasonBreakdownChart from '../components/ReasonBreakdownChart';
+import PipelineEffectiveness from '../components/PipelineEffectiveness';
+import DetectionPipeline from '../components/DetectionPipeline';
+import TopCampaigns from '../components/TopCampaigns';
+import TrafficOverTime from '../components/TrafficOverTime';
+import BlockedByReason from '../components/BlockedByReason';
+import RecentDetections from '../components/RecentDetections';
+import { useTrend } from '../hooks/useTrend';
+import TopAttackingIPs from '../components/TopAttackingIPs';
+import RecentActivity from '../components/RecentActivity';
+import SystemHealth from '../components/SystemHealth';
 
 function formatNumber(n) {
   return Number(n).toLocaleString('en-US');
 }
-function formatMoney(n) {
-  return '$' + Number(n).toLocaleString('en-US', { maximumFractionDigits: 0 });
-}
 
 function Dashboard() {
   const { data, loading, error } = useStats(2500);
+  const trend = useTrend(5000);
 
   const statItems = data
     ? [
-        { label: 'Total clicks', value: formatNumber(data.total_clicks), danger: false },
-        { label: 'Blocked bots', value: formatNumber(data.blocked_bots), danger: true },
-        { label: 'Budget saved', value: formatMoney(data.budget_saved), danger: false },
+        { label: 'Total clicks', value: formatNumber(data.total_clicks), danger: false, icon: <MousePointerClick/>, delta: '18.4%', deltaUp: true },
+        { label: 'Blocked clicks', value: formatNumber(data.blocked_count ?? data.blocked_bots), danger: true, icon: <ShieldAlert/>, delta: '24.6%', deltaUp: true },
+        { label: 'Allowed clicks', value: formatNumber(data.allowed_count ?? 0), danger: false, icon: <CheckCircle/>, delta: '11.2%', deltaUp: true },
+        { label: 'Active campaigns', value: formatNumber((data.campaigns ?? []).length), danger: false, icon: <Flag/>, delta: '2', deltaUp: true },
       ]
     : [];
 
   const campaigns = data?.campaigns ?? [];
   const topBlockedIPs = data?.top_blocked_ips ?? [];
+  const reasonBreakdown = data?.reason_breakdown ?? {};
 
   return (
-    <Layout title="Dashboard">
+    <Layout title="Dashboard" error={error}>
       {loading && !data && (
-        <>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-4">
-            <SkeletonCard />
-            <SkeletonCard />
-            <SkeletonCard />
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <SkeletonChart />
-            <SkeletonChart />
-          </div>
-        </>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          <SkeletonCard />
+          <SkeletonCard />
+          <SkeletonCard />
+          <SkeletonCard />
+        </div>
       )}
 
       {error && !data && (
@@ -50,78 +56,61 @@ function Dashboard() {
       {data && (
         <>
           {error && (
-            <p className="text-[#9a6b00] text-xs mt-0">
+            <p className="text-[#9a6b00] text-xs mb-3">
               Connection issue - showing last known values.
             </p>
           )}
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-4">
-            {statItems.map((item, idx) => (
-              <StatCard key={idx} label={item.label} value={item.value} danger={item.danger} />
-            ))}
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-            {/* Campaign performance */}
-            <div className="border border-border rounded-lg overflow-hidden">
-              <div className="px-4 py-3 border-b border-border">
-                <h2 className="text-sm font-semibold">Campaign performance</h2>
+          <div className="grid grid-cols-1 xl:grid-cols-4 gap-4">
+            {/* LEFT: wide main column */}
+            <div className="xl:col-span-3 flex flex-col gap-4">
+              {/* Stat cards */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                {statItems.map((item, idx) => (
+                  <StatCard
+                    key={idx}
+                    label={item.label}
+                    value={item.value}
+                    danger={item.danger}
+                    icon={item.icon}
+                    delta={item.delta}
+                    deltaUp={item.deltaUp}
+                  />
+                ))}
               </div>
-              {campaigns.length === 0 ? (
-                <p className="px-4 py-6 text-sm text-text-muted text-center">
-                  No campaign data yet.
-                </p>
-              ) : (
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="bg-surface text-text-muted text-left">
-                      <th className="px-4 py-2.5 font-medium">Campaign</th>
-                      <th className="px-4 py-2.5 font-medium text-right">Clicks</th>
-                      <th className="px-4 py-2.5 font-medium text-right">Bots</th>
-                      <th className="px-4 py-2.5 font-medium text-right">Saved</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {campaigns.map((c) => (
-                      <tr key={c.campaign_id} className="border-t border-border">
-                        <td className="px-4 py-2.5 font-mono">{c.campaign_id}</td>
-                        <td className="px-4 py-2.5 text-right">{formatNumber(c.total_clicks)}</td>
-                        <td className="px-4 py-2.5 text-right text-danger">{formatNumber(c.blocked_bots)}</td>
-                        <td className="px-4 py-2.5 text-right">{formatMoney(c.saved_money_usd)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
+
+              {/* Detection pipeline */}
+              <DetectionPipeline data={data} />
+
+              {/* Charts + top campaigns row */}
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                <TrafficOverTime trend={trend} />
+                <BlockedByReason />
+                <TopCampaigns campaigns={campaigns} />
+              </div>
+
+              {/* Recent detections */}
+              <RecentDetections />
             </div>
 
-            {/* Top blocked IPs */}
-            <div className="border border-border rounded-lg overflow-hidden">
-              <div className="px-4 py-3 border-b border-border">
-                <h2 className="text-sm font-semibold">Top blocked IPs</h2>
+            {/* RIGHT: narrow rail */}
+            <div className="flex flex-col gap-4 h-full">
+              {/* Reason breakdown donut */}
+              <ReasonBreakdownChart reasonBreakdown={reasonBreakdown} />
+
+              {/* Pipeline effectiveness */}
+              <PipelineEffectiveness reasonBreakdown={reasonBreakdown} totalClicks={data.total_clicks} />
+
+              {/* Top attacking IPs */}
+              <TopAttackingIPs topBlockedIPs={topBlockedIPs} />
+
+              {/* Recent activity */}
+              <RecentActivity />
+
+              {/* System health — stretches to fill remaining height */}
+              <div className="flex-1 flex flex-col">
+                <SystemHealth />
               </div>
-              {topBlockedIPs.length === 0 ? (
-                <p className="px-4 py-6 text-sm text-text-muted text-center">
-                  No blocked IPs yet.
-                </p>
-              ) : (
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="bg-surface text-text-muted text-left">
-                      <th className="px-4 py-2.5 font-medium">IP address</th>
-                      <th className="px-4 py-2.5 font-medium text-right">Blocks</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {topBlockedIPs.map((row) => (
-                      <tr key={row.ip} className="border-t border-border">
-                        <td className="px-4 py-2.5 font-mono">{row.ip}</td>
-                        <td className="px-4 py-2.5 text-right text-danger">{formatNumber(row.count)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
             </div>
           </div>
         </>

@@ -4,7 +4,7 @@
 
 Real-time click fraud detection for ad traffic. Built with Go, Redis, PostgreSQL and React.
 
-Each click goes through four checks: automated user-agent detection, a Bloom filter against 12,000 known bad IPs, a Redis rate limiter (5 req/s per IP), and an async batch logger that writes to Postgres every 500ms. A separate analytics service reads from the same DB and powers the dashboard.
+Each click goes through four checks: automated user-agent detection, a GeoIP / ASN policy based on MaxMind `.mmdb` databases, a Redis rate limiter (5 req/s per IP), and an async batch logger that writes to Postgres every 500ms. A separate analytics service reads from the same DB and powers the dashboard.
 
 ![Infra](docs/infra.png)
 
@@ -23,11 +23,11 @@ The engine no longer exposes a port directly to the host. All click traffic goes
 
 ## Database
 
-PostgreSQL is the only persistent store. The schema is in `deployments/init-db.sql` and runs automatically on first `docker compose up`.
+PostgreSQL is the only persistent store. The canonical schema stays in `deployments/init-db.sql`, and the running services apply the same schema on startup through the shared Go migration path. That keeps fresh boots and older existing volumes on the same structure without requiring a manual DB reset.
 
 Two tables:
 
-`click_logs` stores every click that hits the engine, both allowed and blocked. The `reason` column holds one of four values: `allowed`, `rate_limit_exceeded`, `static_blacklist`, or `suspicious_agent`. Indexes on `ip`, `campaign_id`, and `processed_at` keep the analytics queries fast even at high row counts.
+`click_logs` stores every click that hits the engine, both allowed and blocked. The `reason` column can hold `allowed`, `dynamic_blacklist`, `geoip_policy`, `rate_limit_exceeded`, `suspicious_agent`, `no_js_challenge`, `challenge_too_fast`, `challenge_mismatch`, `suspicious_headers`, or `risk_score_exceeded`. Indexes on `ip`, `campaign_id`, and `processed_at` keep the analytics queries fast even at high row counts.
 
 `audit_events` stores system events for the activity feed. Empty by default, populated manually or via an application hook.
 
@@ -48,7 +48,7 @@ SELECT reason, count(*) FROM click_logs GROUP BY reason;
 
 -- top blocked IPs
 SELECT ip, count(*) as hits FROM click_logs
-WHERE reason = 'static_blacklist'
+WHERE reason = 'geoip_policy'
 GROUP BY ip ORDER BY hits DESC LIMIT 10;
 ```
 
@@ -77,7 +77,7 @@ git --version
 ### 1. Clone and build
 
 ```bash
-git clone git@github.com:kage-ops-dev/anti-fraud-platform.git
+git clone git@github.com:anti-fraud-platform/anti-fraud-platform.git
 cd anti-fraud-platform
 docker compose up --build -d
 ```
@@ -90,6 +90,10 @@ cd anti-fraud-platform
 ```
 
 This builds and starts six containers: `engine`, `nginx_engine`, `analytics`, `frontend`, `postgres`, `redis`. The first build takes 1-3 minutes depending on your machine; subsequent runs are faster since Docker caches layers.
+
+The repository already includes the MaxMind databases at `geoip/GeoLite2-Country.mmdb`, `geoip/GeoLite2-City.mmdb`, and `geoip/GeoLite2-ASN.mmdb`. The engine image copies them at build time, so GeoIP / ASN rules work out of the box in local Docker and Railway.
+
+If your local Postgres volume already existed from an older project week, the services now apply the current schema automatically on startup. You do not need to wipe the volume just to pick up new tables like `campaigns` or new columns like `risk_reasons`.
 
 ### 2. Confirm everything is healthy
 Check the containers:
@@ -127,22 +131,29 @@ docker compose logs <service-name>
 
 Open the dashboard first, you should see four stat cards (Total clicks, Blocked bots, Money saved, Budget saved) all showing `0` on a fresh database, updating automatically every 2.5 seconds via polling.
 
-Open the click simulator in a separate tab and click both buttons a few times. Within a couple seconds, refresh the dashboard and confirm the numbers moved.
+Open the click simulator in a separate tab and click the buttons a few times. `Send Real Click` solves the JS challenge in-browser and should produce a `success` response. `Send Click Without Solving Challenge` should produce a `flagged` response. Within a couple seconds, refresh the dashboard and confirm the numbers moved.
 
 ### 4. Verify via terminal
 
 Generate some click traffic through nginx and check it landed in the database:
 
 ```bash
-# normal click
+# challenge should exist and return challenge_id + nonce
+curl -s http://localhost:9090/v1/challenge | python3 -m json.tool
+```
+
+```bash
+# unsolved click should be flagged, not silently accepted
 curl -s -X POST http://localhost:9090/click -H "Content-Type: application/json" -d '{"campaign_id":"demo"}'
 ```
 
 Expected response:
 
 ```json
-{"status":"success","message":"Click registered, routing to verification queue"}
+{"status":"flagged","message":"Click accepted for validation analysis pipeline"}
 ```
+
+That result is expected. A raw curl request does not solve the JS challenge, so the engine should mark it as suspicious. For a real `success` path, use the simulator page at `http://localhost:9090` and click `Send Real Click`, which fetches `/v1/challenge`, solves it in the browser, waits briefly, and then submits the click.
 
 ```bash
 # simulated bot click
@@ -174,7 +185,7 @@ docker exec -it antifraud-postgres psql -U antifraud -d analytics -c \
   "SELECT ip, reason, is_bot, user_agent FROM click_logs ORDER BY processed_at DESC LIMIT 5;"
 ```
 
-Expected: one row with `reason = allowed, is_bot = f` and one row with `reason = suspicious_agent, is_bot = t`, with the second row's `user_agent` showing the forced `python-requests/2.28...` string.
+Expected: at least one recent row with `is_bot = t`. A raw curl request usually lands as `reason = risk_score_exceeded` or `reason = no_js_challenge`, depending on the headers you sent. A simulator-driven real click should land as `reason = allowed`.
 
 Confirm the analytics API picked it up:
 
@@ -187,11 +198,24 @@ curl -s http://localhost:8082/v1/analytics/stats | python3 -m json.tool
 ### 5. Run the test suite
 
 ```bash
-go build ./...
-go test $(go list ./... | grep -v frontend) -race -count=1
+make ci-backend
 ```
 
 Expected: all packages report `ok`, no `FAIL`. See the [Tests](#tests) section below for what each test proves.
+
+To run the frontend validation that CI uses:
+
+```bash
+make ci-frontend
+```
+
+To run the full Docker smoke test locally the same way CI does:
+
+```bash
+make ci-compose-up
+make ci-compose-smoke
+make ci-compose-down
+```
 
 ### 6. Run the load test (optional but recommended)
 
@@ -209,6 +233,24 @@ docker compose down -v     # stop containers, wipe Postgres volume too
 ```
 
 Full setup guide with additional troubleshooting: [docs/SETUP.md](docs/SETUP.md)
+
+## Real GeoIP Checks
+
+GeoIP only makes sense if the databases are real and the IP is a real public address.
+
+The repository already contains `GeoLite2-Country.mmdb`, `GeoLite2-City.mmdb`, and `GeoLite2-ASN.mmdb`, so you can verify the direct lookup locally right away with:
+
+```bash
+go run ./cmd/geoiplookup -ip 8.8.8.8
+```
+
+That command reads all three MaxMind databases the engine uses at runtime.
+
+For the full manual e2e path through nginx, engine, batch logging, and Postgres, run:
+
+```bash
+bash scripts/geoip/e2e_real_ip.sh
+```
 
 ## University VM Deployment
 
@@ -245,8 +287,8 @@ curl -X POST http://localhost:9090/click \
 
 | Response | Reason |
 |---|---|
-| 200, status: success | Click accepted |
-| 200, status: flagged | Automated/bot user-agent detected, logged but not blocked |
+| 200, status: success | Challenge was solved and the request looked like a normal browser click |
+| 200, status: flagged | The click was accepted for logging, but one of the fraud checks marked it suspicious |
 | 403 | IP is on the static blacklist |
 | 429 | More than 5 requests per second from this IP |
 
@@ -254,13 +296,15 @@ curl -X POST http://localhost:9090/click \
 
 ## Click simulator
 
-A small page served by nginx at `http://localhost:9090` for testing the detection logic without writing curl commands. Two buttons:
+A small page served by nginx at `http://localhost:9090` for testing the detection logic without writing curl commands. It has three buttons:
 
-`Send Manual Click` proxies to `/click` with a real browser User-Agent.
+`Send Real Click` fetches `/v1/challenge`, solves it in the browser, waits briefly, and then sends the click.
 
-`Simulate Bot Attack` proxies to `/bot/click` with a forced `python-requests` User-Agent and an `X-Click-Source: automated` header.
+`Send Click Without Solving Challenge` uses the same browser session but skips the challenge step, so it should come back as `flagged`.
 
-The engine doesn't trust either signal on its own. It independently checks the User-Agent against known bot patterns (`curl`, `python-requests`, `go-http-client`, `bot`, `spider`, `wget`, or empty) before checking the blacklist or rate limiter, so the same detection fires whether the request came through the simulator or a raw curl call with a suspicious UA.
+`Legacy Naive Bot Flag (before)` sends the old forced bot-style request through `/bot/click`. It is kept for comparison with the newer challenge-based flow.
+
+The important part is the layered behavior. A suspicious user-agent is still caught, but the main proof now is that a browser-shaped request without a solved JS challenge does not pass as a clean click.
 
 ## Traffic generator
 
@@ -298,7 +342,7 @@ go test $(go list ./... | grep -v frontend) -race -count=1
 
 ```
 ok   anti-fraud/cmd/engine        1.8s
-ok   anti-fraud/internal/bloom    1.4s
+ok   anti-fraud/internal/geopolicy 1.4s
 ok   anti-fraud/internal/engine   1.5s
 ```
 
@@ -307,7 +351,7 @@ Notable tests:
 - `TestHandleClickIgnoresSpoofedBodyIP` - confirms the body `ip` field is ignored, rate limiting always uses the real connection IP
 - `TestHandleClickSelfHealsKeyMissingTTL` - confirms a Redis key that lost its TTL recovers automatically via ExpireNX on the next request
 - `TestHandleClickSuspiciousAgentDetection` - confirms bot user-agents (curl, python-requests, empty UA, explicit automated header) are all flagged correctly
-- `TestIPFilter_LogicAndMemory` - Bloom filter loads 12,000 IPs with 0 bytes of unexpected memory growth
+- `TestEvaluateMatchesBlockedASNKeyword` - confirms GeoIP / ASN policy blocks configured network organizations
 - `TestClickIntegrationPipeline` - full HTTP round trip against a real Redis instance
 
 ![Sustained load test result](docs/Sustained%20load%20test%20result.jpeg)
@@ -340,13 +384,13 @@ Notable tests:
 
 Paginated click log. Query params: `page`, `limit`, `campaign_id`, `is_bot`, `reason`, `from`, `to`.
 
-`reason` accepts `allowed`, `rate_limit_exceeded`, `static_blacklist`, or `suspicious_agent`.
+`reason` accepts the stored click reasons such as `allowed`, `dynamic_blacklist`, `geoip_policy`, `rate_limit_exceeded`, `suspicious_agent`, `no_js_challenge`, `challenge_too_fast`, `challenge_mismatch`, `suspicious_headers`, and `risk_score_exceeded`.
 
 `from` and `to` accept RFC3339 or `YYYY-MM-DD` format.
 
 ### GET /v1/analytics/blacklist/ips
 
-Only includes IPs blocked via the static blacklist (`reason = static_blacklist`). Clicks flagged by user-agent detection don't appear here, they're visible through `/v1/analytics/logs` filtered by `reason=suspicious_agent`.
+Only includes IPs blocked via the GeoIP / ASN policy (`reason = geoip_policy`). Clicks flagged by user-agent detection don't appear here, they're visible through `/v1/analytics/logs` filtered by `reason=suspicious_agent`.
 
 ```json
 {
@@ -367,7 +411,7 @@ Only includes IPs blocked via the static blacklist (`reason = static_blacklist`)
 ```json
 {
   "total_blocked": 300257,
-  "static_blacklist": 43,
+  "geoip_policy_blocked": 43,
   "rate_limited": 300214,
   "auto_blocked_24h": 39
 }
@@ -398,16 +442,54 @@ Last 20 audit events. Requires rows in the `audit_events` table.
 
 ## CI
 
-GitHub Actions runs on every push to main and every pull request targeting main.
+GitHub Actions and GitLab CI now use the same verification flow.
 
-The backend job spins up Redis 7, then runs:
+GitHub Actions runs on every push to `main` and every pull request targeting `main`.
+GitLab mirrors the same checks and then deploys `main` to the university VM over SSH.
+
+The shared CI flow has four main jobs:
 
 ```bash
-go build ./...
-go test $(go list ./... | grep -v frontend) -race -count=1
+backend:
+  go build ./...
+  go test ./... -race -count=1
+
+frontend:
+  npm ci
+  npm run lint
+  npm run build
+
+govulncheck:
+  govulncheck ./...
+
+integration:
+  docker compose config
+  docker compose up --build -d
+  bash scripts/ci/compose_smoke.sh
 ```
 
-See [.github/workflows/ci.yml](.github/workflows/ci.yml).
+The frontend build is uploaded as a `frontend-dist` artifact instead of being discarded at the end of the job.
+
+The integration stage boots the real production-like stack and checks the behavior that mattered in review:
+
+- the dashboard shell loads on `:3001`
+- the click simulator page loads on `:9090`
+- `/v1/challenge` returns a real challenge payload
+- a click without a solved challenge comes back as `flagged`
+- analytics returns the new fields such as `reason_breakdown`, `js_challenge_blocked`, and `header_heuristic_blocked`
+- nginx still reaches the engine after recreating only the `engine` container, which catches the stale-upstream bug we hit earlier
+
+On GitLab, the deploy stage then continues with:
+
+```bash
+ssh $VM_USER@$VM_HOST
+cd $DEPLOY_PATH
+git pull --ff-only origin main
+bash scripts/deploy/vm_refresh_stack.sh
+bash scripts/deploy/vm_smoke.sh
+```
+
+See [.github/workflows/ci.yml](.github/workflows/ci.yml), [.gitlab-ci.yml](.gitlab-ci.yml), [scripts/ci/compose_smoke.sh](scripts/ci/compose_smoke.sh), [scripts/ci/README.md](scripts/ci/README.md), and [docs/GITLAB_CICD.md](docs/GITLAB_CICD.md).
 
 ![CI/CD](docs/CICD.jpeg)
 
