@@ -30,6 +30,8 @@ The current `.gitlab-ci.yml` has four stages and five jobs:
    Reloads `nginx_engine`
    Runs remote smoke checks
 
+The local Compose stack is now self-contained for CI. It no longer relies on bind-mounting `init-db.sql`, nginx config files, or GeoIP databases from the runner workspace into Docker-in-Docker.
+
 ## Required GitLab variables
 
 Add these project variables in GitLab:

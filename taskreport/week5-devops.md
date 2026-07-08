@@ -58,6 +58,8 @@ For GitLab CD, I also split the deploy flow into small scripts under `scripts/de
 
 That means the GitLab pipeline can now move from mirrored source code to a running VM deployment without a manual SSH session during normal deploys.
 
+I also removed the remaining CI-hostile bind mounts from local Compose. The engine already copies the MaxMind databases into its image, the nginx simulator now has its own image for local Compose, and the database schema is applied by the Go services on startup. This matters because Docker-in-Docker on GitLab runners cannot safely mount project files from the runner workspace into the daemon the way a local laptop can.
+
 ### 3. GeoIP-only detection
 
 The third area was GeoIP.

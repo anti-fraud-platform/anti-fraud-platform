@@ -26,8 +26,6 @@ services:
       GEOIP_BLOCKED_ASN_KEYWORDS: "digitalocean,cloudflare,hetzner,ovh,linode,vultr,choopa,contabo,scaleway,oracle,amazon technologies,microsoft azure,google cloud"
       REQUIRE_JS_CHALLENGE: "true"
       REQUIRE_HEADER_CHECK: "true"
-    volumes:
-      - ./geoip:/usr/share/GeoIP:ro
 
     expose:
       - "8080"
@@ -42,13 +40,12 @@ services:
     restart: unless-stopped
 
   nginx_engine:
-    image: nginx:1.25-alpine
+    build:
+      context: .
+      dockerfile: Dockerfile.nginx-engine.local
     container_name: antifraud-nginx-engine
     ports:
       - "9090:9090"
-    volumes:
-      - ./deployments/nginx/engine.conf:/etc/nginx/conf.d/default.conf:ro
-      - ./deployments/nginx/html:/usr/share/nginx/html:ro
     depends_on:
       - engine
     networks:
@@ -129,7 +126,6 @@ services:
       - "5433:5432"
     volumes:
       - pg_data:/var/lib/postgresql/data
-      - ./deployments/init-db.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U antifraud -d analytics"]
       interval: 5s

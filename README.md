@@ -23,7 +23,7 @@ The engine no longer exposes a port directly to the host. All click traffic goes
 
 ## Database
 
-PostgreSQL is the only persistent store. The schema is in `deployments/init-db.sql` and runs automatically on first `docker compose up`.
+PostgreSQL is the only persistent store. The canonical schema stays in `deployments/init-db.sql`, and the running services apply the same schema on startup through the shared Go migration path. That keeps fresh boots and older existing volumes on the same structure without requiring a manual DB reset.
 
 Two tables:
 
