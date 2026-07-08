@@ -30,3 +30,8 @@ Layout:
 - `lib/common.sh` holds the shared curl helpers and JSON assertions.
 
 Each file proves one thing. If CI fails, you can usually start with the matching check file instead of reading one long shell script.
+
+Transport modes:
+
+- local runs use host URLs like `localhost:3001`
+- GitLab integration uses `SMOKE_TRANSPORT=compose_exec`, so checks run from inside the Compose services and do not depend on the runner container reaching published ports on `localhost`
