@@ -489,6 +489,8 @@ bash scripts/deploy/vm_refresh_stack.sh
 bash scripts/deploy/vm_smoke.sh
 ```
 
+If the VM does not allow direct SSH as `root`, GitLab can connect as the normal VM user and run the same deploy through `REMOTE_SUDO="sudo -n"`.
+
 See [.github/workflows/ci.yml](.github/workflows/ci.yml), [.gitlab-ci.yml](.gitlab-ci.yml), [scripts/ci/compose_smoke.sh](scripts/ci/compose_smoke.sh), [scripts/ci/README.md](scripts/ci/README.md), and [docs/GITLAB_CICD.md](docs/GITLAB_CICD.md).
 
 ![CI/CD](docs/CICD.jpeg)
