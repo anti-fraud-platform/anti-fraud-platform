@@ -442,14 +442,17 @@ Last 20 audit events. Requires rows in the `audit_events` table.
 
 ## CI
 
-GitHub Actions runs on every push to main and every pull request targeting main.
+GitHub Actions and GitLab CI now use the same verification flow.
 
-The workflow now has four separate jobs:
+GitHub Actions runs on every push to `main` and every pull request targeting `main`.
+GitLab mirrors the same checks and then deploys `main` to the university VM over SSH.
+
+The shared CI flow has four main jobs:
 
 ```bash
 backend:
   go build ./...
-  go test $(go list ./... | grep -v frontend) -race -count=1
+  go test ./... -race -count=1
 
 frontend:
   npm ci
@@ -476,7 +479,17 @@ The integration stage boots the real production-like stack and checks the behavi
 - analytics returns the new fields such as `reason_breakdown`, `js_challenge_blocked`, and `header_heuristic_blocked`
 - nginx still reaches the engine after recreating only the `engine` container, which catches the stale-upstream bug we hit earlier
 
-See [.github/workflows/ci.yml](.github/workflows/ci.yml), [scripts/ci/compose_smoke.sh](scripts/ci/compose_smoke.sh), and [scripts/ci/README.md](scripts/ci/README.md).
+On GitLab, the deploy stage then continues with:
+
+```bash
+ssh $VM_USER@$VM_HOST
+cd $DEPLOY_PATH
+git pull --ff-only origin main
+bash scripts/deploy/vm_refresh_stack.sh
+bash scripts/deploy/vm_smoke.sh
+```
+
+See [.github/workflows/ci.yml](.github/workflows/ci.yml), [.gitlab-ci.yml](.gitlab-ci.yml), [scripts/ci/compose_smoke.sh](scripts/ci/compose_smoke.sh), [scripts/ci/README.md](scripts/ci/README.md), and [docs/GITLAB_CICD.md](docs/GITLAB_CICD.md).
 
 ![CI/CD](docs/CICD.jpeg)
 

@@ -22,17 +22,18 @@ docker-compose restart nginx_engine
 
 Fresh environments should not need this on every deploy anymore. It is still useful once for older running environments that were started before the nginx fix.
 
-### 2. CI improvements
+### 2. CI and CD improvements
 
-The second area was CI.
+The second area was CI and CD.
 
-The previous GitHub Actions workflow mainly answered one question: does the code compile? It did not answer a more important question: does the full stack still behave correctly after changes?
+The previous automation mainly answered one question: does the code compile? It did not answer a more important question: does the full stack still behave correctly after changes, and can it be redeployed without logging into the VM by hand?
 
-I kept the existing backend and frontend checks, then added the missing parts:
+I aligned both GitHub Actions and GitLab CI around the same structure, then added the missing parts:
 
 - frontend build artifact upload
 - `govulncheck`
 - a real integration stage based on Docker Compose
+- a GitLab deploy stage that updates the VM over SSH and runs remote smoke checks
 
 The integration stage now boots the stack and runs smoke checks against the running services.
 
@@ -47,6 +48,15 @@ I also split the smoke checks into small scripts under `scripts/ci/`. Each scrip
 7. nginx still reaches the engine after recreating only the `engine` container
 
 This made the CI logic easier to read and easier to debug. When one check fails, the failing script already points to the area that needs attention.
+
+For GitLab CD, I also split the deploy flow into small scripts under `scripts/deploy/`:
+
+1. `gitlab_prepare_ssh.sh` prepares the SSH agent inside the runner
+2. `gitlab_vm_deploy.sh` connects to the VM and updates the target branch
+3. `vm_refresh_stack.sh` rebuilds the Compose stack and reloads `nginx_engine`
+4. `vm_smoke.sh` verifies the deployed services from inside the VM
+
+That means the GitLab pipeline can now move from mirrored source code to a running VM deployment without a manual SSH session during normal deploys.
 
 ### 3. GeoIP-only detection
 
@@ -111,6 +121,7 @@ Main config and runtime changes:
 - `deployments/nginx/engine.conf`
 - `.github/workflows/ci.yml`
 - `.gitlab-ci.yml`
+- `docs/GITLAB_CICD.md`
 - `docker-compose.yml`
 - `internal/dbschema/schema.go`
 - `internal/geoiputil/resolver.go`
@@ -125,6 +136,11 @@ Verification and helper scripts:
 - `scripts/ci/lib/common.sh`
 - `scripts/ci/checks/*`
 - `scripts/ci/README.md`
+- `scripts/deploy/gitlab_prepare_ssh.sh`
+- `scripts/deploy/gitlab_vm_deploy.sh`
+- `scripts/deploy/vm_refresh_stack.sh`
+- `scripts/deploy/vm_smoke.sh`
+- `scripts/deploy/lib/common.sh`
 - `cmd/geoiplookup/main.go`
 - `scripts/geoip/e2e_real_ip.sh`
 - `scripts/geoip/lib/common.sh`
