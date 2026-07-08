@@ -45,15 +45,25 @@ Add these project variables in GitLab:
 Optional:
 
 - `DEPLOY_BRANCH`
+- `REMOTE_SUDO`
 
 Recommended values:
 
 - `VM_PORT=22`
-- `VM_USER=root` or your deploy user
+- `VM_USER=devops` or your real SSH user
 - `DEPLOY_PATH=/root/apps/anti-fraud-platform`
 - `DEPLOY_BRANCH=main`
+- `REMOTE_SUDO=sudo -n`
 
 The repository on the VM should use the GitLab mirror as `origin`, because the deploy job runs `git fetch origin` and `git pull origin main` on the server side.
+
+If direct SSH as `root` is disabled, use the normal VM user in `VM_USER` and set:
+
+```env
+REMOTE_SUDO=sudo -n
+```
+
+Then the pipeline logs in as that user and executes the deploy commands through non-interactive sudo.
 
 ## Important note about SSH_PRIVATE_KEY
 
