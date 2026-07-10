@@ -1,5 +1,5 @@
 # пока один общий go module, собираем только engine
-FROM golang:1.26-alpine AS build
+FROM golang:1.26.5-alpine AS builder
 
 WORKDIR /app
 
@@ -18,7 +18,7 @@ FROM alpine:3.21
 
 RUN adduser -D -H appuser
 RUN mkdir -p /usr/share/GeoIP
-COPY --from=build /bin/engine /usr/local/bin/engine
+COPY --from=builder /bin/engine /usr/local/bin/engine
 COPY geoip/GeoLite2-Country.mmdb /usr/share/GeoIP/GeoLite2-Country.mmdb
 COPY geoip/GeoLite2-City.mmdb /usr/share/GeoIP/GeoLite2-City.mmdb
 COPY geoip/GeoLite2-ASN.mmdb /usr/share/GeoIP/GeoLite2-ASN.mmdb
