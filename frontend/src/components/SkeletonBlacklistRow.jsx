@@ -9,6 +9,9 @@ const SkeletonBlacklistRow = () => (
     <td className="px-3.5 py-2.5">
       <div className="h-4 bg-gray-200 rounded w-32" />
     </td>
+    <td className="px-3.5 py-2.5">
+      <div className="h-4 bg-gray-200 rounded w-32" />
+    </td>
   </tr>
 );
 

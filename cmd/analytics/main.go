@@ -133,6 +133,7 @@ type BlacklistIPEntry struct {
 	BlockCount   int64  `json:"block_count"`
 	FirstBlocked string `json:"first_blocked"`
 	LastBlocked  string `json:"last_blocked"`
+	Source       string `json:"source"`
 }
 
 // BlacklistIPsResponse holds the list of blocked IPs.
@@ -655,15 +656,19 @@ func blacklistIPsHandler(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-    // UNION of dynamic_blacklist and geoip_policy blocks (from click_logs)
+    // UNION of dynamic_blacklist and geoip_policy blocks (from click_logs).
+    // source is kept per-row (STRING_AGG in case an IP was blocked by both)
+    // so the frontend can show why an IP is listed instead of implying
+    // everything came from GeoIP policy.
     query := `
-        SELECT ip, SUM(block_count) as block_count, MIN(first_blocked) as first_blocked, MAX(last_blocked) as last_blocked
+        SELECT ip, SUM(block_count) as block_count, MIN(first_blocked) as first_blocked, MAX(last_blocked) as last_blocked,
+               STRING_AGG(DISTINCT source, ',' ORDER BY source) as source
         FROM (
-            SELECT ip, COUNT(*) as block_count, MIN(created_at) as first_blocked, MAX(created_at) as last_blocked
+            SELECT ip, 'dynamic_blacklist' as source, COUNT(*) as block_count, MIN(created_at) as first_blocked, MAX(created_at) as last_blocked
             FROM dynamic_blacklist
             GROUP BY ip
             UNION ALL
-            SELECT ip, COUNT(*) as block_count, MIN(processed_at) as first_blocked, MAX(processed_at) as last_blocked
+            SELECT ip, 'geoip_policy' as source, COUNT(*) as block_count, MIN(processed_at) as first_blocked, MAX(processed_at) as last_blocked
             FROM click_logs
             WHERE reason = 'geoip_policy'
             GROUP BY ip
@@ -685,7 +690,7 @@ func blacklistIPsHandler(w http.ResponseWriter, r *http.Request) {
     for rows.Next() {
         var entry BlacklistIPEntry
         var firstBlocked, lastBlocked time.Time
-        if err := rows.Scan(&entry.IP, &entry.BlockCount, &firstBlocked, &lastBlocked); err != nil {
+        if err := rows.Scan(&entry.IP, &entry.BlockCount, &firstBlocked, &lastBlocked, &entry.Source); err != nil {
             log.Printf("Error scanning blacklist row: %v", err)
             continue
         }
