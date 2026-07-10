@@ -477,15 +477,29 @@ func isDynamicBlacklisted(ip string) bool {
 }
 
 // promoteToDynamicBlacklist adds an IP to the persistent dynamic blacklist.
+// It stores the IP in Redis for fast blocking and in PostgreSQL for analytics.
 func promoteToDynamicBlacklist(ip string, client *redis.Client) {
-	if client == nil {
-		return
-	}
-	if err := client.SAdd(ctx, dynBlacklistSetKey, ip).Err(); err != nil {
-		log.Printf("Failed to add IP to dynamic blacklist: %v", err)
-		return
-	}
-	log.Printf("IP %s promoted to dynamic blacklist", ip)
+    if client == nil {
+        return
+    }
+    // Add to Redis set for fast blocking
+    if err := client.SAdd(ctx, dynBlacklistSetKey, ip).Err(); err != nil {
+        log.Printf("Failed to add IP to dynamic blacklist: %v", err)
+        return
+    }
+    log.Printf("IP %s promoted to dynamic blacklist", ip)
+
+    // Persist to PostgreSQL for analytics queries
+    if db != nil {
+        _, err := db.Exec(`
+            INSERT INTO dynamic_blacklist (ip, created_at, reason)
+            VALUES ($1, NOW(), 'dynamic_blacklist')
+            ON CONFLICT (ip) DO UPDATE SET created_at = NOW(), reason = 'dynamic_blacklist'
+        `, ip)
+        if err != nil {
+            log.Printf("Failed to insert IP into dynamic_blacklist table: %v", err)
+        }
+    }
 }
 
 // incrementDynamicBlacklistCounter increments a per-IP counter and promotes if threshold is reached.

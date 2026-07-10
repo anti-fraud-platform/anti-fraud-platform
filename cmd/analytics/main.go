@@ -459,55 +459,76 @@ func logsHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
-// blacklistSummaryHandler returns summary metrics specifically for the blacklist page.
+// blacklistSummaryHandler returns summary metrics for the blacklist page.
 func blacklistSummaryHandler(w http.ResponseWriter, r *http.Request) {
-	var summary BlacklistSummaryResponse
+    var summary BlacklistSummaryResponse
 
-	err := db.QueryRow("SELECT COUNT(*) FROM click_logs WHERE is_bot = true").Scan(&summary.TotalBlocked)
-	if err != nil {
-		log.Printf("Error querying total blocked: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
+    // Total unique IPs from dynamic_blacklist OR geoip_policy blocks
+    err := db.QueryRow(`
+        SELECT COUNT(DISTINCT ip) FROM (
+            SELECT ip FROM dynamic_blacklist
+            UNION
+            SELECT ip FROM click_logs WHERE reason = 'geoip_policy'
+        ) combined
+    `).Scan(&summary.TotalBlocked)
+    if err != nil {
+        log.Printf("Error querying total blocked IPs: %v", err)
+        http.Error(w, "Internal server error", http.StatusInternalServerError)
+        return
+    }
 
-	err = db.QueryRow("SELECT COUNT(*) FROM click_logs WHERE reason = 'geoip_policy'").Scan(&summary.GeoIPPolicy)
-	if err != nil {
-		log.Printf("Error querying GeoIP policy count: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
+    // GeoIP policy blocked clicks count
+    err = db.QueryRow("SELECT COUNT(*) FROM click_logs WHERE reason = 'geoip_policy'").Scan(&summary.GeoIPPolicy)
+    if err != nil {
+        log.Printf("Error querying GeoIP policy count: %v", err)
+        http.Error(w, "Internal server error", http.StatusInternalServerError)
+        return
+    }
 
-	err = db.QueryRow("SELECT COUNT(*) FROM click_logs WHERE reason = 'rate_limit_exceeded'").Scan(&summary.RateLimited)
-	if err != nil {
-		log.Printf("Error querying rate limit count: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
+    // Rate-limited clicks (optional)
+    err = db.QueryRow("SELECT COUNT(*) FROM click_logs WHERE reason = 'rate_limit_exceeded'").Scan(&summary.RateLimited)
+    if err != nil {
+        log.Printf("Error querying rate limit count: %v", err)
+        http.Error(w, "Internal server error", http.StatusInternalServerError)
+        return
+    }
 
-	err = db.QueryRow("SELECT COUNT(*) FROM click_logs WHERE is_bot = true AND processed_at >= NOW() - INTERVAL '24 hours'").Scan(&summary.AutoBlocked24h)
-	if err != nil {
-		log.Printf("Error querying 24h blocked count: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
+    // IPs added to dynamic_blacklist in the last 24 hours
+    err = db.QueryRow(`
+        SELECT COUNT(DISTINCT ip) 
+        FROM dynamic_blacklist 
+        WHERE created_at >= NOW() - INTERVAL '24 hours'
+    `).Scan(&summary.AutoBlocked24h)
+    if err != nil {
+        log.Printf("Error querying auto-blocked 24h count: %v", err)
+        http.Error(w, "Internal server error", http.StatusInternalServerError)
+        return
+    }
 
-	err = db.QueryRow("SELECT COUNT(*) FROM click_logs WHERE reason IN ('no_js_challenge', 'challenge_too_fast', 'challenge_mismatch')").Scan(&summary.JSChallengeBlocked)
-	if err != nil {
-		log.Printf("Error querying js challenge blocked count: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
+    // JS challenge blocked clicks (Tier 1)
+    err = db.QueryRow(`
+        SELECT COUNT(*) FROM click_logs 
+        WHERE reason IN ('no_js_challenge', 'challenge_too_fast', 'challenge_mismatch')
+    `).Scan(&summary.JSChallengeBlocked)
+    if err != nil {
+        log.Printf("Error querying js challenge blocked count: %v", err)
+        http.Error(w, "Internal server error", http.StatusInternalServerError)
+        return
+    }
 
-	err = db.QueryRow("SELECT COUNT(*) FROM click_logs WHERE reason = 'suspicious_headers'").Scan(&summary.HeaderHeuristicBlocked)
-	if err != nil {
-		log.Printf("Error querying header heuristic blocked count: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
+    // Header heuristic blocked clicks (Tier 1)
+    err = db.QueryRow(`
+        SELECT COUNT(*) FROM click_logs WHERE reason = 'suspicious_headers'
+    `).Scan(&summary.HeaderHeuristicBlocked)
+    if err != nil {
+        log.Printf("Error querying header heuristic blocked count: %v", err)
+        http.Error(w, "Internal server error", http.StatusInternalServerError)
+        return
+    }
 
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	json.NewEncoder(w).Encode(summary)
+    w.Header().Set("Content-Type", "application/json")
+    w.Header().Set("Access-Control-Allow-Origin", "*")
+    json.NewEncoder(w).Encode(summary)
 }
 
 // trendHandler returns day-over-day aggregated traffic for the last 7 days.
@@ -623,61 +644,74 @@ func auditEventsHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(events)
 }
 
-// blacklistIPsHandler returns the list of IPs blocked due to the GeoIP policy.
 func blacklistIPsHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+    w.Header().Set("Content-Type", "application/json")
+    w.Header().Set("Access-Control-Allow-Origin", "*")
+    w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+    w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 
-	if r.Method == "OPTIONS" {
-		w.WriteHeader(http.StatusOK)
-		return
-	}
+    if r.Method == "OPTIONS" {
+        w.WriteHeader(http.StatusOK)
+        return
+    }
 
-	query := `
-		SELECT 
-			ip,
-			COUNT(*) as block_count,
-			MIN(processed_at) as first_blocked,
-			MAX(processed_at) as last_blocked
-		FROM click_logs
-		WHERE reason = 'geoip_policy'
-		GROUP BY ip
-		ORDER BY last_blocked DESC
-		LIMIT 50
-	`
+    // UNION of dynamic_blacklist and geoip_policy blocks (from click_logs)
+    query := `
+        SELECT ip, SUM(block_count) as block_count, MIN(first_blocked) as first_blocked, MAX(last_blocked) as last_blocked
+        FROM (
+            SELECT ip, COUNT(*) as block_count, MIN(created_at) as first_blocked, MAX(created_at) as last_blocked
+            FROM dynamic_blacklist
+            GROUP BY ip
+            UNION ALL
+            SELECT ip, COUNT(*) as block_count, MIN(processed_at) as first_blocked, MAX(processed_at) as last_blocked
+            FROM click_logs
+            WHERE reason = 'geoip_policy'
+            GROUP BY ip
+        ) combined
+        GROUP BY ip
+        ORDER BY last_blocked DESC
+        LIMIT 50
+    `
 
-	rows, err := db.Query(query)
-	if err != nil {
-		log.Printf("Error querying blacklist IPs: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
-	defer rows.Close()
+    rows, err := db.Query(query)
+    if err != nil {
+        log.Printf("Error querying blacklist IPs: %v", err)
+        http.Error(w, "Internal server error", http.StatusInternalServerError)
+        return
+    }
+    defer rows.Close()
 
-	items := []BlacklistIPEntry{}
-	for rows.Next() {
-		var entry BlacklistIPEntry
-		var firstBlocked, lastBlocked time.Time
-		if err := rows.Scan(&entry.IP, &entry.BlockCount, &firstBlocked, &lastBlocked); err != nil {
-			log.Printf("Error scanning blacklist row: %v", err)
-			continue
-		}
-		entry.FirstBlocked = firstBlocked.Format("2006-01-02 15:04")
-		entry.LastBlocked = lastBlocked.Format("2006-01-02 15:04")
-		items = append(items, entry)
-	}
+    items := []BlacklistIPEntry{}
+    for rows.Next() {
+        var entry BlacklistIPEntry
+        var firstBlocked, lastBlocked time.Time
+        if err := rows.Scan(&entry.IP, &entry.BlockCount, &firstBlocked, &lastBlocked); err != nil {
+            log.Printf("Error scanning blacklist row: %v", err)
+            continue
+        }
+        entry.FirstBlocked = firstBlocked.Format("2006-01-02 15:04")
+        entry.LastBlocked = lastBlocked.Format("2006-01-02 15:04")
+        items = append(items, entry)
+    }
 
-	var total int64
-	db.QueryRow("SELECT COUNT(DISTINCT ip) FROM click_logs WHERE reason = 'geoip_policy'").Scan(&total)
+    // Total unique IPs from both sources
+    var total int64
+    err = db.QueryRow(`
+        SELECT COUNT(DISTINCT ip) FROM (
+            SELECT ip FROM dynamic_blacklist
+            UNION
+            SELECT ip FROM click_logs WHERE reason = 'geoip_policy'
+        ) combined
+    `).Scan(&total)
+    if err != nil {
+        log.Printf("Error counting total unique IPs: %v", err)
+        total = int64(len(items))
+    }
 
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	json.NewEncoder(w).Encode(BlacklistIPsResponse{
-		Items: items,
-		Total: total,
-	})
+    json.NewEncoder(w).Encode(BlacklistIPsResponse{
+        Items: items,
+        Total: total,
+    })
 }
 
 // ---------- Helper Functions ----------
