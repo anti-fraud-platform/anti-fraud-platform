@@ -44,10 +44,12 @@ func setupTestDB(t *testing.T) {
 	var err error
 	db, err = sql.Open("postgres", connStr)
 	if err != nil {
-		t.Fatalf("Failed to open test DB connection: %v", err)
+		t.Skipf("Skipping test: database not available (%v)", err)
+		return
 	}
 	if err = db.Ping(); err != nil {
-		t.Fatalf("Test DB not reachable: %v", err)
+		t.Skipf("Skipping test: database not reachable (%v)", err)
+		return
 	}
 }
 
