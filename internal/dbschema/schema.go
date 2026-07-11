@@ -75,12 +75,16 @@ CREATE TABLE IF NOT EXISTS campaigns (
     cost_per_click BIGINT NOT NULL DEFAULT 5,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS name VARCHAR(255) NOT NULL DEFAULT '';
 
 INSERT INTO campaigns (campaign_id, name)
 VALUES
     ('unknown', 'Unknown Campaign'),
     ('demo', 'Demo Campaign')
 ON CONFLICT (campaign_id) DO NOTHING;
+
+
+
 
 CREATE TABLE IF NOT EXISTS dynamic_blacklist (
     ip VARCHAR(45) PRIMARY KEY,
