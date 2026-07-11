@@ -1,15 +1,11 @@
 import { useState } from 'react';
 
-// NOTE (for the report): backend only provides { ip, count } (real blocked count).
-// "Requests" and "% Blocked" are not available in the data, so they are mocked.
 function TopAttackingIPs({ topBlockedIPs }) {
   const [showAll, setShowAll] = useState(false);
 
   const rows = (topBlockedIPs || []).map((r) => {
-    const blocked = r.count || 0;
-    let extra = 0;
-    for (let i = 0; i < (r.ip || '').length; i++) extra += r.ip.charCodeAt(i);
-    const requests = blocked + (extra % 7) + 3;
+    const blocked = r.blocked || 0;
+    const requests = r.total_requests || 0;
     const pct = requests > 0 ? (blocked / requests) * 100 : 0;
     return { ip: r.ip, blocked, requests, pct };
   });

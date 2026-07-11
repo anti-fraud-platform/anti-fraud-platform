@@ -24,7 +24,8 @@ export async function fetchAnalyticsStats() {
 // GET /v1/analytics/logs
 // Query params: page, limit, campaign_id, is_bot, reason
 // Backend returns: { data: [...ClickLogEntry], total, page, limit, total_pages }
-// ClickLogEntry: id, ip, campaign_id, user_agent, is_bot, reason, processed_at.
+// ClickLogEntry: id, ip, campaign_id, user_agent, is_bot, reason, processed_at, country, city.
+//   country - ISO-3166 alpha-2 code from GeoIP (e.g. "RU"), empty if unresolved.
 export async function fetchAnalyticsLogs(params = {}) {
   const response = await client.get('/v1/analytics/logs', { params })
   return response.data

@@ -77,6 +77,8 @@ type ClickLogEntry struct {
 	IsBot       bool      `json:"is_bot"`
 	Reason      string    `json:"reason"`
 	ProcessedAt time.Time `json:"processed_at"`
+	Country     string    `json:"country"` // ISO-3166 alpha-2, e.g. "RU"; empty if GeoIP couldn't resolve the IP
+	City        string    `json:"city"`
 }
 
 // LogsResponse is the paginated response for /v1/analytics/logs.
@@ -410,7 +412,7 @@ func logsHandler(w http.ResponseWriter, r *http.Request) {
 	totalPages := int((total + int64(limit) - 1) / int64(limit))
 
 	dataQuery := fmt.Sprintf(`
-		SELECT id, ip, campaign_id, user_agent, is_bot, reason, processed_at
+		SELECT id, ip, campaign_id, user_agent, is_bot, reason, processed_at, country, city
 		FROM click_logs
 		%s
 		ORDER BY processed_at DESC
@@ -429,6 +431,7 @@ func logsHandler(w http.ResponseWriter, r *http.Request) {
 	logs := []ClickLogEntry{}
 	for rows.Next() {
 		var entry ClickLogEntry
+		var country, city sql.NullString
 		if err := rows.Scan(
 			&entry.ID,
 			&entry.IP,
@@ -437,10 +440,14 @@ func logsHandler(w http.ResponseWriter, r *http.Request) {
 			&entry.IsBot,
 			&entry.Reason,
 			&entry.ProcessedAt,
+			&country,
+			&city,
 		); err != nil {
 			log.Printf("Error scanning log row: %v", err)
 			continue
 		}
+		entry.Country = country.String
+		entry.City = city.String
 		logs = append(logs, entry)
 	}
 
