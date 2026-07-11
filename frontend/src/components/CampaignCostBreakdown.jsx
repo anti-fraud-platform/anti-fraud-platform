@@ -4,9 +4,9 @@ function formatUSD(n) {
   return `$${Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-// TODO(cost-per-click API): once Vladimir's per-campaign CPC endpoint is live,
-// swap avgCpc for a real value from the backend instead of deriving it from
-// saved_money_usd / blocked_bots, and drop the "estimated" labeling below.
+// avgCpc is derived (saved_money_usd / blocked_bots) rather than read from a
+// dedicated field, but the backend computes saved_money_usd from the real
+// per-campaign cost_per_click, so this is exact, not an estimate.
 function CampaignCostBreakdown({ campaigns }) {
   const [showAll, setShowAll] = useState(false);
 
@@ -29,8 +29,8 @@ function CampaignCostBreakdown({ campaigns }) {
         <h2 className="text-sm font-semibold">Cost saved by campaign</h2>
       </div>
 
-      {/* Grows to fill the card's stretched height (grid row match with sibling charts) */}
-      <div className="flex-1 min-h-[170px] overflow-y-auto">
+      {/* Fixed-height body so the card doesn't grow with "View all campaigns" */}
+      <div className="h-[170px] overflow-y-auto">
         {rows.length === 0 ? (
           <p className="px-4 py-6 text-sm text-text-muted text-center">No campaign cost data yet.</p>
         ) : (
