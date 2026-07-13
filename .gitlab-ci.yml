@@ -19,6 +19,13 @@ backend:
     - go test ./...
     - go vet ./...
 
+compose-config:
+  stage: test
+  image: docker:28
+  script:
+    - docker compose config > /tmp/compose-base.yaml
+    - docker compose --profile monitoring config > /tmp/compose-monitoring.yaml
+
 frontend:
   stage: test
   image: node:22-bookworm-slim
@@ -54,6 +61,7 @@ docker-build:
   needs:
     - backend
     - frontend
+    - compose-config
 
 deploy_vm:
   stage: deploy
@@ -73,12 +81,18 @@ deploy_vm:
       git fetch origin &&
       git checkout main &&
       git pull --ff-only origin main &&
-      docker-compose up --build -d &&
-      docker-compose restart nginx_engine &&
-      docker-compose ps"
+      export COMPOSE_PROFILES=monitoring &&
+      docker compose up --build -d &&
+      docker compose restart nginx_engine &&
+      docker compose ps &&
+      curl -fsS http://localhost:9090/v1/challenge >/dev/null &&
+      curl -fsS http://localhost:8082/v1/analytics/stats >/dev/null &&
+      curl -fsS http://localhost:9091/-/ready >/dev/null &&
+      curl -fsS http://localhost:3000/api/health | grep -q '\"database\":\"ok\"'"
   needs:
     - backend
     - frontend
+    - compose-config
     - docker-build
   only:
     - main
