@@ -18,11 +18,6 @@ import (
 
 // ---------- Constants ----------
 
-// costPerClickUSD is the fixed CPC estimate used to compute the ad budget
-// saved by blocking a fraudulent click. Change this single value to adjust
-// every "budget saved" figure the service reports.
-const costPerClickUSD = 5.0
-
 // topBlockedIPsLimit caps how many offending IPs the stats endpoint returns.
 const topBlockedIPsLimit = 10
 
@@ -133,6 +128,7 @@ type BlacklistIPEntry struct {
 	BlockCount   int64  `json:"block_count"`
 	FirstBlocked string `json:"first_blocked"`
 	LastBlocked  string `json:"last_blocked"`
+	Source       string `json:"source"`
 }
 
 // BlacklistIPsResponse holds the list of blocked IPs.
@@ -159,44 +155,44 @@ var jsChallengeReasons = []string{"no_js_challenge", "challenge_too_fast", "chal
 // and the top offending IPs. This is what the frontend reads on initial
 // page load, before the WebSocket stream takes over for live updates.
 func statsHandler(w http.ResponseWriter, r *http.Request) {
-	// Current totals
-	var totalClicks, blockedCount int64
-	if err := db.QueryRow("SELECT COUNT(*) FROM click_logs").Scan(&totalClicks); err != nil {
-		log.Printf("Error counting total clicks: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
-	if err := db.QueryRow("SELECT COUNT(*) FROM click_logs WHERE is_bot = true").Scan(&blockedCount); err != nil {
-		log.Printf("Error counting blocked clicks: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
-	allowedCount := totalClicks - blockedCount
+    // Current totals
+    var totalClicks, blockedCount int64
+    if err := db.QueryRow("SELECT COUNT(*) FROM click_logs").Scan(&totalClicks); err != nil {
+        log.Printf("Error counting total clicks: %v", err)
+        http.Error(w, "Internal server error", http.StatusInternalServerError)
+        return
+    }
+    if err := db.QueryRow("SELECT COUNT(*) FROM click_logs WHERE is_bot = true").Scan(&blockedCount); err != nil {
+        log.Printf("Error counting blocked clicks: %v", err)
+        http.Error(w, "Internal server error", http.StatusInternalServerError)
+        return
+    }
+    allowedCount := totalClicks - blockedCount
 
-	// Previous 7‑day period (14 to 7 days ago)
-	var prevTotal, prevBlocked int64
-	if err := db.QueryRow(`
+    // Previous 7‑day period (14 to 7 days ago)
+    var prevTotal, prevBlocked int64
+    if err := db.QueryRow(`
         SELECT COUNT(*), COUNT(*) FILTER (WHERE is_bot = true)
         FROM click_logs
         WHERE processed_at >= NOW() - INTERVAL '14 days'
           AND processed_at < NOW() - INTERVAL '7 days'
     `).Scan(&prevTotal, &prevBlocked); err != nil {
-		log.Printf("Error counting previous period: %v", err)
-		prevTotal, prevBlocked = 0, 0
-	}
+        log.Printf("Error counting previous period: %v", err)
+        prevTotal, prevBlocked = 0, 0
+    }
 
-	// Deltas
-	deltaTotal := 0.0
-	if prevTotal > 0 {
-		deltaTotal = float64(totalClicks-prevTotal) / float64(prevTotal) * 100
-	}
-	deltaBlocked := 0.0
-	if prevBlocked > 0 {
-		deltaBlocked = float64(blockedCount-prevBlocked) / float64(prevBlocked) * 100
-	}
+    // Deltas
+    deltaTotal := 0.0
+    if prevTotal > 0 {
+        deltaTotal = float64(totalClicks-prevTotal) / float64(prevTotal) * 100
+    }
+    deltaBlocked := 0.0
+    if prevBlocked > 0 {
+        deltaBlocked = float64(blockedCount-prevBlocked) / float64(prevBlocked) * 100
+    }
 
-	// Per‑campaign stats with custom cost per click (from campaigns table, default 5.00)
-	rows, err := db.Query(`
+    // Per‑campaign stats with custom cost per click (from campaigns table, default 5.00)
+    rows, err := db.Query(`
         SELECT 
             c.campaign_id,
             COALESCE(cam.cost_per_click, 5.00) as cpc,
@@ -207,31 +203,35 @@ func statsHandler(w http.ResponseWriter, r *http.Request) {
         GROUP BY c.campaign_id, cam.cost_per_click
         ORDER BY c.campaign_id
     `)
-	if err != nil {
-		log.Printf("Error querying campaign stats: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
-	defer rows.Close()
+    if err != nil {
+        log.Printf("Error querying campaign stats: %v", err)
+        http.Error(w, "Internal server error", http.StatusInternalServerError)
+        return
+    }
+    defer rows.Close()
 
-	campaigns := []CampaignStats{}
-	for rows.Next() {
-		var campID string
-		var cpc, total, blocked int64
-		if err := rows.Scan(&campID, &cpc, &total, &blocked); err != nil {
-			log.Printf("Error scanning campaign stats: %v", err)
-			continue
-		}
-		campaigns = append(campaigns, CampaignStats{
-			CampaignID:    campID,
-			TotalClicks:   total,
-			BlockedBots:   blocked,
-			SavedMoneyUSD: float64(blocked) * float64(cpc),
-		})
-	}
+    var totalSaved float64 
+    campaigns := []CampaignStats{}
+    for rows.Next() {
+        var campID string
+        var cpc float64
+        var total, blocked int64
+        if err := rows.Scan(&campID, &cpc, &total, &blocked); err != nil {
+            log.Printf("Error scanning campaign stats: %v", err)
+            continue
+        }
+        saved := float64(blocked) * float64(cpc)
+        campaigns = append(campaigns, CampaignStats{
+            CampaignID:    campID,
+            TotalClicks:   total,
+            BlockedBots:   blocked,
+            SavedMoneyUSD: saved,
+        })
+        totalSaved += saved 
+    }
 
-	// Top blocked IPs – now with total requests
-	topRows, err := db.Query(`
+    // Top blocked IPs – now with total requests
+    topRows, err := db.Query(`
         SELECT ip,
                COUNT(*) as total_requests,
                COUNT(*) FILTER (WHERE is_bot = true) as blocked_count
@@ -241,78 +241,76 @@ func statsHandler(w http.ResponseWriter, r *http.Request) {
         ORDER BY blocked_count DESC
         LIMIT $1
     `, topBlockedIPsLimit)
-	if err != nil {
-		log.Printf("Error querying top blocked IPs: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
-	defer topRows.Close()
+    if err != nil {
+        log.Printf("Error querying top blocked IPs: %v", err)
+        http.Error(w, "Internal server error", http.StatusInternalServerError)
+        return
+    }
+    defer topRows.Close()
 
-	topBlockedIPs := []BlockedIPStat{}
-	for topRows.Next() {
-		var stat BlockedIPStat
-		if err := topRows.Scan(&stat.IP, &stat.TotalRequests, &stat.Count); err != nil {
-			log.Printf("Error scanning top blocked IP: %v", err)
-			continue
-		}
-		topBlockedIPs = append(topBlockedIPs, stat)
-	}
+    topBlockedIPs := []BlockedIPStat{}
+    for topRows.Next() {
+        var stat BlockedIPStat
+        if err := topRows.Scan(&stat.IP, &stat.TotalRequests, &stat.Count); err != nil {
+            log.Printf("Error scanning top blocked IP: %v", err)
+            continue
+        }
+        topBlockedIPs = append(topBlockedIPs, stat)
+    }
 
-	// Reason breakdown (unchanged)
-	reasonRows, err := db.Query(`
+    // Reason breakdown (unchanged)
+    reasonRows, err := db.Query(`
         SELECT reason, COUNT(*) as cnt
         FROM click_logs
         WHERE is_bot = true
         GROUP BY reason
     `)
-	if err != nil {
-		log.Printf("Error querying reason breakdown: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
-	defer reasonRows.Close()
+    if err != nil {
+        log.Printf("Error querying reason breakdown: %v", err)
+        http.Error(w, "Internal server error", http.StatusInternalServerError)
+        return
+    }
+    defer reasonRows.Close()
 
-	reasonBreakdown := map[string]int64{}
-	for reasonRows.Next() {
-		var reason string
-		var cnt int64
-		if err := reasonRows.Scan(&reason, &cnt); err != nil {
-			log.Printf("Error scanning reason breakdown row: %v", err)
-			continue
-		}
-		reasonBreakdown[reason] = cnt
-	}
+    reasonBreakdown := map[string]int64{}
+    for reasonRows.Next() {
+        var reason string
+        var cnt int64
+        if err := reasonRows.Scan(&reason, &cnt); err != nil {
+            log.Printf("Error scanning reason breakdown row: %v", err)
+            continue
+        }
+        reasonBreakdown[reason] = cnt
+    }
 
-	// Convenience fields for JS and header (unchanged)
-	var jsChallengeBlocked, headerHeuristicBlocked int64
-	jsChallengeReasons := []string{"no_js_challenge", "challenge_too_fast", "challenge_mismatch"}
-	for _, reason := range jsChallengeReasons {
-		jsChallengeBlocked += reasonBreakdown[reason]
-	}
-	headerHeuristicBlocked = reasonBreakdown["suspicious_headers"]
+    // Convenience fields for JS and header
+    var jsChallengeBlocked, headerHeuristicBlocked int64
+    jsChallengeReasons := []string{"no_js_challenge", "challenge_too_fast", "challenge_mismatch"}
+    for _, reason := range jsChallengeReasons {
+        jsChallengeBlocked += reasonBreakdown[reason]
+    }
+    headerHeuristicBlocked = reasonBreakdown["suspicious_headers"]
 
-	saved := float64(blockedCount) * 5.0 // fallback, will be overridden by per‑campaign sum? We keep this for compatibility.
-
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	json.NewEncoder(w).Encode(StatsResponse{
-		TotalClicks:            totalClicks,
-		AllowedCount:           allowedCount,
-		BlockedCount:           blockedCount,
-		BlockedBots:            blockedCount,
-		SavedMoneyUSD:          saved,
-		BudgetSaved:            saved,
-		TopBlockedIPs:          topBlockedIPs,
-		Campaigns:              campaigns,
-		ReasonBreakdown:        reasonBreakdown,
-		JSChallengeBlocked:     jsChallengeBlocked,
-		HeaderHeuristicBlocked: headerHeuristicBlocked,
-		// New fields:
-		PreviousTotalClicks:  prevTotal,
-		PreviousBlockedCount: prevBlocked,
-		TotalClicksDelta:     deltaTotal,
-		BlockedCountDelta:    deltaBlocked,
-	})
+    // Ответ – используем totalSaved вместо старой константы
+    w.Header().Set("Content-Type", "application/json")
+    w.Header().Set("Access-Control-Allow-Origin", "*")
+    json.NewEncoder(w).Encode(StatsResponse{
+        TotalClicks:            totalClicks,
+        AllowedCount:           allowedCount,
+        BlockedCount:           blockedCount,
+        BlockedBots:            blockedCount, 
+        SavedMoneyUSD:          totalSaved,   
+        BudgetSaved:            totalSaved,   
+        TopBlockedIPs:          topBlockedIPs,
+        Campaigns:              campaigns,
+        ReasonBreakdown:        reasonBreakdown,
+        JSChallengeBlocked:     jsChallengeBlocked,
+        HeaderHeuristicBlocked: headerHeuristicBlocked,
+        PreviousTotalClicks:    prevTotal,
+        PreviousBlockedCount:   prevBlocked,
+        TotalClicksDelta:       deltaTotal,
+        BlockedCountDelta:      deltaBlocked,
+    })
 }
 
 // logsHandler returns raw click logs with pagination and filtering.
@@ -459,55 +457,76 @@ func logsHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
-// blacklistSummaryHandler returns summary metrics specifically for the blacklist page.
+// blacklistSummaryHandler returns summary metrics for the blacklist page.
 func blacklistSummaryHandler(w http.ResponseWriter, r *http.Request) {
-	var summary BlacklistSummaryResponse
+    var summary BlacklistSummaryResponse
 
-	err := db.QueryRow("SELECT COUNT(*) FROM click_logs WHERE is_bot = true").Scan(&summary.TotalBlocked)
-	if err != nil {
-		log.Printf("Error querying total blocked: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
+    // Total unique IPs from dynamic_blacklist OR geoip_policy blocks
+    err := db.QueryRow(`
+        SELECT COUNT(DISTINCT ip) FROM (
+            SELECT ip FROM dynamic_blacklist
+            UNION
+            SELECT ip FROM click_logs WHERE reason = 'geoip_policy'
+        ) combined
+    `).Scan(&summary.TotalBlocked)
+    if err != nil {
+        log.Printf("Error querying total blocked IPs: %v", err)
+        http.Error(w, "Internal server error", http.StatusInternalServerError)
+        return
+    }
 
-	err = db.QueryRow("SELECT COUNT(*) FROM click_logs WHERE reason = 'geoip_policy'").Scan(&summary.GeoIPPolicy)
-	if err != nil {
-		log.Printf("Error querying GeoIP policy count: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
+    // GeoIP policy blocked clicks count
+    err = db.QueryRow("SELECT COUNT(*) FROM click_logs WHERE reason = 'geoip_policy'").Scan(&summary.GeoIPPolicy)
+    if err != nil {
+        log.Printf("Error querying GeoIP policy count: %v", err)
+        http.Error(w, "Internal server error", http.StatusInternalServerError)
+        return
+    }
 
-	err = db.QueryRow("SELECT COUNT(*) FROM click_logs WHERE reason = 'rate_limit_exceeded'").Scan(&summary.RateLimited)
-	if err != nil {
-		log.Printf("Error querying rate limit count: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
+    // Rate-limited clicks (optional)
+    err = db.QueryRow("SELECT COUNT(*) FROM click_logs WHERE reason = 'rate_limit_exceeded'").Scan(&summary.RateLimited)
+    if err != nil {
+        log.Printf("Error querying rate limit count: %v", err)
+        http.Error(w, "Internal server error", http.StatusInternalServerError)
+        return
+    }
 
-	err = db.QueryRow("SELECT COUNT(*) FROM click_logs WHERE is_bot = true AND processed_at >= NOW() - INTERVAL '24 hours'").Scan(&summary.AutoBlocked24h)
-	if err != nil {
-		log.Printf("Error querying 24h blocked count: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
+    // IPs added to dynamic_blacklist in the last 24 hours
+    err = db.QueryRow(`
+        SELECT COUNT(DISTINCT ip) 
+        FROM dynamic_blacklist 
+        WHERE created_at >= NOW() - INTERVAL '24 hours'
+    `).Scan(&summary.AutoBlocked24h)
+    if err != nil {
+        log.Printf("Error querying auto-blocked 24h count: %v", err)
+        http.Error(w, "Internal server error", http.StatusInternalServerError)
+        return
+    }
 
-	err = db.QueryRow("SELECT COUNT(*) FROM click_logs WHERE reason IN ('no_js_challenge', 'challenge_too_fast', 'challenge_mismatch')").Scan(&summary.JSChallengeBlocked)
-	if err != nil {
-		log.Printf("Error querying js challenge blocked count: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
+    // JS challenge blocked clicks (Tier 1)
+    err = db.QueryRow(`
+        SELECT COUNT(*) FROM click_logs 
+        WHERE reason IN ('no_js_challenge', 'challenge_too_fast', 'challenge_mismatch')
+    `).Scan(&summary.JSChallengeBlocked)
+    if err != nil {
+        log.Printf("Error querying js challenge blocked count: %v", err)
+        http.Error(w, "Internal server error", http.StatusInternalServerError)
+        return
+    }
 
-	err = db.QueryRow("SELECT COUNT(*) FROM click_logs WHERE reason = 'suspicious_headers'").Scan(&summary.HeaderHeuristicBlocked)
-	if err != nil {
-		log.Printf("Error querying header heuristic blocked count: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
+    // Header heuristic blocked clicks (Tier 1)
+    err = db.QueryRow(`
+        SELECT COUNT(*) FROM click_logs WHERE reason = 'suspicious_headers'
+    `).Scan(&summary.HeaderHeuristicBlocked)
+    if err != nil {
+        log.Printf("Error querying header heuristic blocked count: %v", err)
+        http.Error(w, "Internal server error", http.StatusInternalServerError)
+        return
+    }
 
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	json.NewEncoder(w).Encode(summary)
+    w.Header().Set("Content-Type", "application/json")
+    w.Header().Set("Access-Control-Allow-Origin", "*")
+    json.NewEncoder(w).Encode(summary)
 }
 
 // trendHandler returns day-over-day aggregated traffic for the last 7 days.
@@ -623,61 +642,78 @@ func auditEventsHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(events)
 }
 
-// blacklistIPsHandler returns the list of IPs blocked due to the GeoIP policy.
 func blacklistIPsHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+    w.Header().Set("Content-Type", "application/json")
+    w.Header().Set("Access-Control-Allow-Origin", "*")
+    w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+    w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 
-	if r.Method == "OPTIONS" {
-		w.WriteHeader(http.StatusOK)
-		return
-	}
+    if r.Method == "OPTIONS" {
+        w.WriteHeader(http.StatusOK)
+        return
+    }
 
-	query := `
-		SELECT 
-			ip,
-			COUNT(*) as block_count,
-			MIN(processed_at) as first_blocked,
-			MAX(processed_at) as last_blocked
-		FROM click_logs
-		WHERE reason = 'geoip_policy'
-		GROUP BY ip
-		ORDER BY last_blocked DESC
-		LIMIT 50
-	`
+    // UNION of dynamic_blacklist and geoip_policy blocks (from click_logs).
+    // source is kept per-row (STRING_AGG in case an IP was blocked by both)
+    // so the frontend can show why an IP is listed instead of implying
+    // everything came from GeoIP policy.
+    query := `
+        SELECT ip, SUM(block_count) as block_count, MIN(first_blocked) as first_blocked, MAX(last_blocked) as last_blocked,
+               STRING_AGG(DISTINCT source, ',' ORDER BY source) as source
+        FROM (
+            SELECT ip, 'dynamic_blacklist' as source, COUNT(*) as block_count, MIN(created_at) as first_blocked, MAX(created_at) as last_blocked
+            FROM dynamic_blacklist
+            GROUP BY ip
+            UNION ALL
+            SELECT ip, 'geoip_policy' as source, COUNT(*) as block_count, MIN(processed_at) as first_blocked, MAX(processed_at) as last_blocked
+            FROM click_logs
+            WHERE reason = 'geoip_policy'
+            GROUP BY ip
+        ) combined
+        GROUP BY ip
+        ORDER BY last_blocked DESC
+        LIMIT 50
+    `
 
-	rows, err := db.Query(query)
-	if err != nil {
-		log.Printf("Error querying blacklist IPs: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
-	defer rows.Close()
+    rows, err := db.Query(query)
+    if err != nil {
+        log.Printf("Error querying blacklist IPs: %v", err)
+        http.Error(w, "Internal server error", http.StatusInternalServerError)
+        return
+    }
+    defer rows.Close()
 
-	items := []BlacklistIPEntry{}
-	for rows.Next() {
-		var entry BlacklistIPEntry
-		var firstBlocked, lastBlocked time.Time
-		if err := rows.Scan(&entry.IP, &entry.BlockCount, &firstBlocked, &lastBlocked); err != nil {
-			log.Printf("Error scanning blacklist row: %v", err)
-			continue
-		}
-		entry.FirstBlocked = firstBlocked.Format("2006-01-02 15:04")
-		entry.LastBlocked = lastBlocked.Format("2006-01-02 15:04")
-		items = append(items, entry)
-	}
+    items := []BlacklistIPEntry{}
+    for rows.Next() {
+        var entry BlacklistIPEntry
+        var firstBlocked, lastBlocked time.Time
+        if err := rows.Scan(&entry.IP, &entry.BlockCount, &firstBlocked, &lastBlocked, &entry.Source); err != nil {
+            log.Printf("Error scanning blacklist row: %v", err)
+            continue
+        }
+        entry.FirstBlocked = firstBlocked.Format("2006-01-02 15:04")
+        entry.LastBlocked = lastBlocked.Format("2006-01-02 15:04")
+        items = append(items, entry)
+    }
 
-	var total int64
-	db.QueryRow("SELECT COUNT(DISTINCT ip) FROM click_logs WHERE reason = 'geoip_policy'").Scan(&total)
+    // Total unique IPs from both sources
+    var total int64
+    err = db.QueryRow(`
+        SELECT COUNT(DISTINCT ip) FROM (
+            SELECT ip FROM dynamic_blacklist
+            UNION
+            SELECT ip FROM click_logs WHERE reason = 'geoip_policy'
+        ) combined
+    `).Scan(&total)
+    if err != nil {
+        log.Printf("Error counting total unique IPs: %v", err)
+        total = int64(len(items))
+    }
 
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	json.NewEncoder(w).Encode(BlacklistIPsResponse{
-		Items: items,
-		Total: total,
-	})
+    json.NewEncoder(w).Encode(BlacklistIPsResponse{
+        Items: items,
+        Total: total,
+    })
 }
 
 // ---------- Helper Functions ----------

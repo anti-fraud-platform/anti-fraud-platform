@@ -60,7 +60,8 @@ var (
 	riskThreshold         = 3                      // score >= this => blocked as "risk_score_exceeded"
 	dynBlacklistThreshold = 5                      // 5+ flagged hits in window
 	dynBlacklistWindow    = time.Hour              // rolling window for auto-promotion
-	dynBlacklistSetKey    = "af:dynamic_blacklist" // Redis set of permanently blocked IPs
+	dynBlacklistKeyPrefix = "af:dynamic_blacklist:" // per-IP key, TTL-based block
+	dynBlacklistBlockTTL  = 15 * time.Minute        // how long an IP stays blocked once promoted
 	rateKeyPrefix         = "rate:fp:"             // new prefix for fingerprint-based rate limiting
 )
 
@@ -468,24 +469,38 @@ func fingerprint(r *http.Request) string {
 
 // isDynamicBlacklisted checks if IP is in the dynamic blacklist (Redis set).
 func isDynamicBlacklisted(ip string) bool {
-	ok, err := rdb.SIsMember(ctx, dynBlacklistSetKey, ip).Result()
+	exists, err := rdb.Exists(ctx, dynBlacklistKeyPrefix+ip).Result()
 	if err != nil {
-		log.Printf("Redis SIsMember error: %v", err)
+		log.Printf("Redis Exists error: %v", err)
 		return false
 	}
-	return ok
+	return exists > 0
 }
 
 // promoteToDynamicBlacklist adds an IP to the persistent dynamic blacklist.
+// It stores the IP in Redis for fast blocking and in PostgreSQL for analytics.
 func promoteToDynamicBlacklist(ip string, client *redis.Client) {
-	if client == nil {
-		return
-	}
-	if err := client.SAdd(ctx, dynBlacklistSetKey, ip).Err(); err != nil {
-		log.Printf("Failed to add IP to dynamic blacklist: %v", err)
-		return
-	}
-	log.Printf("IP %s promoted to dynamic blacklist", ip)
+    if client == nil {
+        return
+    }
+    // Add to Redis set for fast blocking
+if err := client.Set(ctx, dynBlacklistKeyPrefix+ip, "1", dynBlacklistBlockTTL).Err(); err != nil {
+    log.Printf("Failed to add IP to dynamic blacklist: %v", err)
+    return
+}
+log.Printf("IP %s promoted to dynamic blacklist for %s", ip, dynBlacklistBlockTTL)
+
+    // Persist to PostgreSQL for analytics queries
+    if db != nil {
+        _, err := db.Exec(`
+            INSERT INTO dynamic_blacklist (ip, created_at, reason)
+            VALUES ($1, NOW(), 'dynamic_blacklist')
+            ON CONFLICT (ip) DO UPDATE SET created_at = NOW(), reason = 'dynamic_blacklist'
+        `, ip)
+        if err != nil {
+            log.Printf("Failed to insert IP into dynamic_blacklist table: %v", err)
+        }
+    }
 }
 
 // incrementDynamicBlacklistCounter increments a per-IP counter and promotes if threshold is reached.

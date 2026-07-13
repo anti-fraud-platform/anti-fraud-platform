@@ -3,6 +3,19 @@ import Layout from '../components/Layout';
 import SkeletonBlacklistRow from '../components/SkeletonBlacklistRow';
 const intervalMs = 5000;
 
+const SOURCE_LABELS = {
+  dynamic_blacklist: 'Auto-blacklist',
+  geoip_policy: 'GeoIP / ASN policy',
+};
+
+function formatSource(source) {
+  if (!source) return '—';
+  return source
+    .split(',')
+    .map((s) => SOURCE_LABELS[s] || s)
+    .join(' + ');
+}
+
 function Blacklist() {
   const [loading, setLoading] = useState(true);
   const [blacklistData, setBlacklistData] = useState([]);
@@ -25,8 +38,8 @@ function Blacklist() {
         setError(null);
       } catch (err) {
         if (cancelled) return;
-        console.error('Error fetching GeoIP policy blocks:', err);
-        setError('Failed to load GeoIP policy data');
+        console.error('Error fetching blocked IPs:', err);
+        setError('Failed to load blocked IP data');
 
         timer = setTimeout(fetchBlacklist, intervalMs);
       } finally {
@@ -50,9 +63,10 @@ function Blacklist() {
       return;
     }
 
-    const headers = ['IP', 'Block Count', 'First Blocked', 'Last Blocked'];
+    const headers = ['IP', 'Source', 'Block Count', 'First Blocked', 'Last Blocked'];
     const rows = blacklistData.map(item => [
       item.ip,
+      formatSource(item.source),
       item.block_count,
       item.first_blocked,
       item.last_blocked
@@ -68,7 +82,7 @@ function Blacklist() {
     const url = URL.createObjectURL(blob);
     
     link.setAttribute('href', url);
-    link.setAttribute('download', `geoip_policy_export_${new Date().toISOString().slice(0,10)}.csv`);
+    link.setAttribute('download', `blocked_ips_export_${new Date().toISOString().slice(0,10)}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -76,10 +90,10 @@ function Blacklist() {
   };
 
   return (
-    <Layout title="GeoIP / ASN Blocks" error={error}>
+    <Layout title="Blocked IPs" error={error}>
       <div className="flex justify-between items-center mb-4">
         <div className="text-sm text-text-muted">
-          {blacklistData.length > 0 && `Showing ${blacklistData.length} IPs blocked by GeoIP policy`}
+          {blacklistData.length > 0 && `Showing ${blacklistData.length} blocked IPs (GeoIP policy + auto-blacklist)`}
         </div>
         <button
           onClick={exportToCSV}
@@ -101,6 +115,7 @@ function Blacklist() {
           <thead>
             <tr className="bg-surface text-left text-text-muted">
               <th className="px-3.5 py-2.5 font-medium">IP</th>
+              <th className="px-3.5 py-2.5 font-medium">Source</th>
               <th className="px-3.5 py-2.5 font-medium">Block Count</th>
               <th className="px-3.5 py-2.5 font-medium">First Blocked</th>
               <th className="px-3.5 py-2.5 font-medium">Last Blocked</th>
@@ -111,14 +126,15 @@ function Blacklist() {
               Array.from({ length: 3 }).map((_, i) => <SkeletonBlacklistRow key={i} />)
             ) : blacklistData.length === 0 ? (
               <tr>
-                <td colSpan="4" className="px-3.5 py-4 text-center text-text-muted">
-                  No GeoIP policy blocks found
+                <td colSpan="5" className="px-3.5 py-4 text-center text-text-muted">
+                  No blocked IPs found
                 </td>
               </tr>
             ) : (
               blacklistData.map((row, i) => (
                 <tr key={i} className="border-t border-border">
                   <td className="px-3.5 py-2.5 font-mono text-text-main">{row.ip}</td>
+                  <td className="px-3.5 py-2.5 text-text-main">{formatSource(row.source)}</td>
                   <td className="px-3.5 py-2.5 text-text-main">{row.block_count}</td>
                   <td className="px-3.5 py-2.5 text-text-muted">{row.first_blocked}</td>
                   <td className="px-3.5 py-2.5 text-text-muted">{row.last_blocked}</td>

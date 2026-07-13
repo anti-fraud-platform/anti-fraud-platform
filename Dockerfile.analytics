@@ -1,4 +1,4 @@
-FROM golang:1.26-alpine AS build
+FROM golang:1.26.5-alpine AS builder
 
 WORKDIR /app
 
@@ -17,7 +17,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o /bin/analytics ./cmd/analytics
 FROM alpine:3.21
 
 RUN adduser -D -H appuser
-COPY --from=build /bin/analytics /usr/local/bin/analytics
+COPY --from=builder /bin/analytics /usr/local/bin/analytics
 USER appuser
 
 EXPOSE 8081
