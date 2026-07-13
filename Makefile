@@ -22,6 +22,7 @@
 	ci-backend \
 	ci-frontend \
 	ci-govulncheck \
+	ci-compose-prepare-images \
 	ci-compose-up \
 	ci-compose-smoke \
 	ci-compose-down \
@@ -103,7 +104,10 @@ ci-govulncheck:
 	go install golang.org/x/vuln/cmd/govulncheck@latest
 	$$(go env GOPATH)/bin/govulncheck ./...
 
-ci-compose-up: compose-config
+ci-compose-prepare-images:
+	bash scripts/ci/prepare_runtime_images.sh
+
+ci-compose-up: compose-config ci-compose-prepare-images
 	docker compose up --build -d
 
 ci-compose-smoke:
