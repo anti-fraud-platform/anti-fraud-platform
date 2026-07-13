@@ -6,6 +6,11 @@ Human-friendly entry points:
 - `make ci-compose-smoke` runs the full smoke suite
 - `make ci-compose-down` tears everything down
 
+CI uses `docker-compose.ci.yml`, not the main `docker-compose.yml`.
+Reason: GitLab runs Docker inside Docker, and nested bind mounts from `/builds/...`
+are unreliable there. The CI compose file packages nginx assets and GeoIP data into
+images instead of mounting them from the repo checkout.
+
 If you want only one check, run one of these:
 
 - `make ci-check-wait`

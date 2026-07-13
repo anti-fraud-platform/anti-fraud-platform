@@ -2,6 +2,10 @@
 
 set -euo pipefail
 
+readonly COMMON_LIB_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+readonly REPO_ROOT="$(cd -- "$COMMON_LIB_DIR/../.." && pwd)"
+readonly CI_COMPOSE_FILE="${ANTI_FRAUD_CI_COMPOSE_FILE:-$REPO_ROOT/docker-compose.ci.yml}"
+
 browser_like_headers=(
   -H "Content-Type: application/json"
   -H "User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
@@ -15,11 +19,11 @@ browser_like_headers=(
 
 compose() {
   if docker compose version >/dev/null 2>&1; then
-    docker compose "$@"
+    docker compose -f "$CI_COMPOSE_FILE" "$@"
     return
   fi
 
-  docker-compose "$@"
+  docker-compose -f "$CI_COMPOSE_FILE" "$@"
 }
 
 wait_for_url() {

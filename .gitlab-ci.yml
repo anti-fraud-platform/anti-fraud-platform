@@ -26,6 +26,7 @@ compose-config:
   script:
     - docker compose config > /tmp/compose-base.yaml
     - docker compose --profile monitoring config > /tmp/compose-monitoring.yaml
+    - docker compose -f docker-compose.ci.yml config > /tmp/compose-ci.yaml
 
 frontend:
   stage: test
@@ -58,6 +59,7 @@ docker-build:
   script:
     - docker build -f Dockerfile.engine -t antifraud-engine:ci .
     - docker build -f Dockerfile.analytics -t antifraud-analytics:ci .
+    - docker build -f Dockerfile.nginx-engine -t antifraud-nginx-engine:ci .
     - docker build -f frontend/Dockerfile -t antifraud-frontend:ci .
   needs:
     - backend
@@ -80,9 +82,9 @@ integration:
     - make ci-compose-up
     - make ci-compose-smoke
   after_script:
-    - docker compose ps > compose-ps.txt || true
-    - docker compose logs --no-color > compose-logs.txt || true
-    - docker compose down -v || true
+    - docker compose -f docker-compose.ci.yml ps > compose-ps.txt || true
+    - docker compose -f docker-compose.ci.yml logs --no-color > compose-logs.txt || true
+    - docker compose -f docker-compose.ci.yml down -v || true
   artifacts:
     when: always
     expire_in: 7 days
