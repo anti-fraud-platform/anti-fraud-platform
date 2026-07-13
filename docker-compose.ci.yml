@@ -1,0 +1,158 @@
+name: anti-fraud-platform-ci
+
+services:
+  engine:
+    build:
+      context: .
+      dockerfile: Dockerfile.engine
+    environment:
+      PORT: "8080"
+      ENGINE_PORT: "8080"
+      ANALYTICS_URL: "http://analytics:8081"
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: analytics
+      DB_USER: antifraud
+      DB_PASSWORD: antifraud123
+      DB_MAX_OPEN_CONNS: "80"
+      DB_MAX_IDLE_CONNS: "20"
+      DB_BATCH_SIZE: "1000"
+      DB_BATCH_FLUSH_MS: "500"
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      GEOIP_DB_PATH: /usr/share/GeoIP/GeoLite2-Country.mmdb
+      GEOIP_COUNTRY_DB_PATH: /usr/share/GeoIP/GeoLite2-Country.mmdb
+      GEOIP_CITY_DB_PATH: /usr/share/GeoIP/GeoLite2-City.mmdb
+      GEOIP_ASN_DB_PATH: /usr/share/GeoIP/GeoLite2-ASN.mmdb
+      GEOIP_BLOCKED_ASN_KEYWORDS: "digitalocean,cloudflare,hetzner,ovh,linode,vultr,choopa,contabo,scaleway,oracle,amazon technologies,microsoft azure,google cloud"
+      REQUIRE_JS_CHALLENGE: "true"
+      REQUIRE_HEADER_CHECK: "true"
+    expose:
+      - "8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - antifraud-net
+    restart: unless-stopped
+
+  nginx_engine:
+    build:
+      context: .
+      dockerfile: Dockerfile.nginx-engine
+    image: anti-fraud-platform-nginx-engine:ci
+    environment:
+      PORT: "9090"
+      ENGINE_UPSTREAM: engine:8080
+      UPSTREAM_RESOLVER: 127.0.0.11
+    ports:
+      - "9090:9090"
+    depends_on:
+      - engine
+    networks:
+      - antifraud-net
+    restart: unless-stopped
+
+  analytics:
+    build:
+      context: .
+      dockerfile: Dockerfile.analytics
+    environment:
+      PORT: "8081"
+      ANALYTICS_PORT: "8081"
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: analytics
+      DB_USER: antifraud
+      DB_PASSWORD: antifraud123
+      DB_MAX_OPEN_CONNS: "40"
+      DB_MAX_IDLE_CONNS: "10"
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+    ports:
+      - "8082:8081"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - antifraud-net
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    environment:
+      PORT: "80"
+      FRONTEND_PORT: "3000"
+      ANALYTICS_UPSTREAM: analytics:8081
+      ENGINE_UPSTREAM: engine:8080
+    ports:
+      - "3001:80"
+    depends_on:
+      - analytics
+      - engine
+    networks:
+      - antifraud-net
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: antifraud
+      POSTGRES_PASSWORD: antifraud123
+      POSTGRES_DB: analytics
+      PGDATA: /var/lib/postgresql/data/pgdata
+    command:
+      - postgres
+      - -c
+      - max_connections=200
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - effective_cache_size=768MB
+      - -c
+      - work_mem=8MB
+      - -c
+      - maintenance_work_mem=128MB
+      - -c
+      - wal_compression=on
+    shm_size: "256mb"
+    ports:
+      - "5433:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U antifraud -d analytics"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - antifraud-net
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    environment:
+      REDIS_PORT: "6379"
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - antifraud-net
+    restart: unless-stopped
+
+volumes:
+  pg_data:
+
+networks:
+  antifraud-net:
+    driver: bridge
