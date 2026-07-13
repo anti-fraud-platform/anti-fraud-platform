@@ -21,9 +21,11 @@ Each click goes through four checks: automated user-agent detection, a GeoIP / A
 
 The engine no longer exposes a port directly to the host. All click traffic goes through nginx on port 9090.
 
+Monitoring and VM load-test flow for Week 6: [docs/MONITORING_LOADTEST.md](docs/MONITORING_LOADTEST.md)
+
 ## Database
 
-PostgreSQL is the only persistent store. The canonical schema stays in `deployments/init-db.sql`, and the running services apply the same schema on startup through the shared Go migration path. That keeps fresh boots and older existing volumes on the same structure without requiring a manual DB reset.
+PostgreSQL is the only persistent store. The schema is in `deployments/init-db.sql` and runs automatically on first `docker compose up`.
 
 Two tables:
 
@@ -217,13 +219,47 @@ make ci-compose-smoke
 make ci-compose-down
 ```
 
-### 6. Run the load test (optional but recommended)
+### 6. Start monitoring (optional but recommended)
 
 ```bash
-go run ./cmd/generator/ -attack -workers 10 -duration 30s
+COMPOSE_PROFILES=monitoring docker compose up --build -d
 ```
 
-Expected: catch rate above 99% by the end, 429s dominating the output after the first second. See [Traffic generator](#traffic-generator) below for full expected output.
+Open:
+
+- Grafana: `http://localhost:3000`
+- Prometheus: `http://localhost:9091`
+
+Grafana login defaults to `admin / admin`.
+
+The provisioned dashboard already shows:
+
+- request rate on `/v1/click`
+- `200 / 403 / 429` over time
+- `p95` click latency
+- engine goroutine count
+- Redis / PostgreSQL health
+- node CPU / memory
+
+### 7. Run the Week 6 load tests
+
+Real-click ramp:
+
+```bash
+bash scripts/loadtest/run_k6.sh k6_real_click_ramp.js
+```
+
+Mixed screenshot run:
+
+```bash
+bash scripts/loadtest/run_k6.sh k6_status_mix.js
+```
+
+If you are targeting the university VM instead of local Docker, point both commands at the VM gateway:
+
+```bash
+BASE_URL=http://10.93.26.161:9090 bash scripts/loadtest/run_k6.sh k6_real_click_ramp.js
+```
 
 ### Tearing down
 
@@ -442,17 +478,14 @@ Last 20 audit events. Requires rows in the `audit_events` table.
 
 ## CI
 
-GitHub Actions and GitLab CI now use the same verification flow.
+GitHub Actions runs on every push to main and every pull request targeting main.
 
-GitHub Actions runs on every push to `main` and every pull request targeting `main`.
-GitLab mirrors the same checks and then deploys `main` to the university VM over SSH.
-
-The shared CI flow has four main jobs:
+The workflow now has four separate jobs:
 
 ```bash
 backend:
   go build ./...
-  go test ./... -race -count=1
+  go test $(go list ./... | grep -v frontend) -race -count=1
 
 frontend:
   npm ci
@@ -479,19 +512,7 @@ The integration stage boots the real production-like stack and checks the behavi
 - analytics returns the new fields such as `reason_breakdown`, `js_challenge_blocked`, and `header_heuristic_blocked`
 - nginx still reaches the engine after recreating only the `engine` container, which catches the stale-upstream bug we hit earlier
 
-On GitLab, the deploy stage then continues with:
-
-```bash
-ssh $VM_USER@$VM_HOST
-cd $DEPLOY_PATH
-git pull --ff-only origin main
-bash scripts/deploy/vm_refresh_stack.sh
-bash scripts/deploy/vm_smoke.sh
-```
-
-If the VM does not allow direct SSH as `root`, GitLab can connect as the normal VM user and run the same deploy through `REMOTE_SUDO="sudo -n"`.
-
-See [.github/workflows/ci.yml](.github/workflows/ci.yml), [.gitlab-ci.yml](.gitlab-ci.yml), [scripts/ci/compose_smoke.sh](scripts/ci/compose_smoke.sh), [scripts/ci/README.md](scripts/ci/README.md), and [docs/GITLAB_CICD.md](docs/GITLAB_CICD.md).
+See [.github/workflows/ci.yml](.github/workflows/ci.yml), [scripts/ci/compose_smoke.sh](scripts/ci/compose_smoke.sh), and [scripts/ci/README.md](scripts/ci/README.md).
 
 ![CI/CD](docs/CICD.jpeg)
 

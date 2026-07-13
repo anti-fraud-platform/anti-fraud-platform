@@ -12,7 +12,10 @@
 	memory-check \
 	compose-config \
 	compose-up \
+	compose-up-monitoring \
 	compose-down \
+	monitoring-up \
+	monitoring-down \
 	frontend-install \
 	frontend-lint \
 	frontend-build \
@@ -28,7 +31,9 @@
 	ci-check-analytics \
 	ci-check-challenge \
 	ci-check-nginx-reresolve \
-	ci-check-frontend-reresolve
+	ci-check-frontend-reresolve \
+	loadtest-k6-ramp \
+	loadtest-k6-mix
 
 fmt:
 	gofmt -w $$(find . -name '*.go' -not -path './vendor/*')
@@ -69,8 +74,17 @@ compose-config:
 compose-up:
 	docker compose up -d --build
 
+compose-up-monitoring:
+	COMPOSE_PROFILES=monitoring docker compose up -d --build
+
 compose-down:
 	docker compose down
+
+monitoring-up:
+	COMPOSE_PROFILES=monitoring docker compose up -d prometheus grafana node_exporter
+
+monitoring-down:
+	COMPOSE_PROFILES=monitoring docker compose stop grafana prometheus node_exporter
 
 frontend-install:
 	cd frontend && npm ci --no-audit --no-fund
@@ -118,3 +132,9 @@ ci-check-nginx-reresolve:
 
 ci-check-frontend-reresolve:
 	bash scripts/ci/checks/07_frontend_engine_proxy_reresolve.sh
+
+loadtest-k6-ramp:
+	bash scripts/loadtest/run_k6.sh k6_real_click_ramp.js
+
+loadtest-k6-mix:
+	bash scripts/loadtest/run_k6.sh k6_status_mix.js
