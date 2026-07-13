@@ -3,18 +3,19 @@
 set -euo pipefail
 
 readonly COMMON_LIB_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-readonly REPO_ROOT="$(cd -- "$COMMON_LIB_DIR/../.." && pwd)"
+readonly REPO_ROOT="$(cd -- "$COMMON_LIB_DIR/../../.." && pwd)"
 readonly CI_COMPOSE_FILE="${ANTI_FRAUD_CI_COMPOSE_FILE:-$REPO_ROOT/docker-compose.ci.yml}"
+readonly SMOKE_TRANSPORT_MODE="${SMOKE_TRANSPORT:-host}"
 
 browser_like_headers=(
-  -H "Content-Type: application/json"
-  -H "User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
-  -H "Accept: */*"
-  -H "Accept-Language: en-US,en;q=0.9"
-  -H "Accept-Encoding: gzip, deflate, br"
-  -H "Sec-Fetch-Site: same-origin"
-  -H "Sec-Fetch-Mode: cors"
-  -H 'Sec-Ch-Ua: "Chromium";v="126", "Not.A/Brand";v="99", "Google Chrome";v="126"'
+  "Content-Type: application/json"
+  "User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+  "Accept: */*"
+  "Accept-Language: en-US,en;q=0.9"
+  "Accept-Encoding: gzip, deflate, br"
+  "Sec-Fetch-Site: same-origin"
+  "Sec-Fetch-Mode: cors"
+  'Sec-Ch-Ua: "Chromium";v="126", "Not.A/Brand";v="99", "Google Chrome";v="126"'
 )
 
 compose() {
@@ -26,13 +27,122 @@ compose() {
   docker-compose -f "$CI_COMPOSE_FILE" "$@"
 }
 
+resolve_transport_target() {
+  local url="$1"
+  local base path service internal_url
+
+  case "$url" in
+    http://localhost:3001/*)
+      base="http://localhost:3001"
+      service="frontend"
+      internal_url="http://127.0.0.1"
+      ;;
+    http://localhost:3001)
+      base="http://localhost:3001"
+      service="frontend"
+      internal_url="http://127.0.0.1"
+      ;;
+    http://localhost:8082/*)
+      base="http://localhost:8082"
+      service="analytics"
+      internal_url="http://127.0.0.1:8081"
+      ;;
+    http://localhost:8082)
+      base="http://localhost:8082"
+      service="analytics"
+      internal_url="http://127.0.0.1:8081"
+      ;;
+    http://localhost:9090/*)
+      base="http://localhost:9090"
+      service="nginx_engine"
+      internal_url="http://127.0.0.1:9090"
+      ;;
+    http://localhost:9090)
+      base="http://localhost:9090"
+      service="nginx_engine"
+      internal_url="http://127.0.0.1:9090"
+      ;;
+    *)
+      echo "Unsupported smoke URL for compose_exec transport: $url" >&2
+      return 1
+      ;;
+  esac
+
+  path="${url#"$base"}"
+  if [[ -z "$path" ]]; then
+    path="/"
+  fi
+
+  printf '%s|%s%s\n' "$service" "$internal_url" "$path"
+}
+
+compose_exec_http() {
+  local method="$1"
+  local service="$2"
+  local target_url="$3"
+  local body="${4:-}"
+  shift 4
+  local -a headers=( "$@" )
+  local -a cmd=( wget -qO- )
+  local header
+  local quoted_cmd
+
+  if [[ "$method" == "POST" ]]; then
+    cmd+=( --post-data="$body" )
+  fi
+
+  for header in "${headers[@]}"; do
+    cmd+=( --header="$header" )
+  done
+
+  cmd+=( "$target_url" )
+  printf -v quoted_cmd '%q ' "${cmd[@]}"
+  compose exec -T "$service" sh -lc "$quoted_cmd"
+}
+
+http_get() {
+  local url="$1"
+  local service target
+
+  if [[ "$SMOKE_TRANSPORT_MODE" == "compose_exec" ]]; then
+    IFS='|' read -r service target <<<"$(resolve_transport_target "$url")"
+    compose_exec_http "GET" "$service" "$target" ""
+    return
+  fi
+
+  curl -fsS "$url"
+}
+
+http_post_json() {
+  local url="$1"
+  local body="$2"
+  shift 2
+  local -a headers=( "$@" )
+  local service target
+  local -a curl_args=( -fsS -X POST )
+  local header
+
+  if [[ "$SMOKE_TRANSPORT_MODE" == "compose_exec" ]]; then
+    IFS='|' read -r service target <<<"$(resolve_transport_target "$url")"
+    compose_exec_http "POST" "$service" "$target" "$body" "${headers[@]}"
+    return
+  fi
+
+  for header in "${headers[@]}"; do
+    curl_args+=( -H "$header" )
+  done
+
+  curl_args+=( -d "$body" "$url" )
+  curl "${curl_args[@]}"
+}
+
 wait_for_url() {
   local url="$1"
   local attempts="${2:-30}"
   local sleep_seconds="${3:-2}"
 
   for _ in $(seq 1 "$attempts"); do
-    if curl -fsS "$url" >/dev/null; then
+    if http_get "$url" >/dev/null; then
       return 0
     fi
     sleep "$sleep_seconds"
@@ -48,7 +158,7 @@ require_page_contains() {
   local description="$3"
   local body
 
-  body="$(curl -fsS "$url")"
+  body="$(http_get "$url")"
   if [[ "$body" != *"$expected_fragment"* ]]; then
     echo "$description" >&2
     exit 1
@@ -60,7 +170,7 @@ require_json_fields() {
   shift
   local payload
 
-  payload="$(curl -fsS "$url")"
+  payload="$(http_get "$url")"
   python3 - "$payload" "$@" <<'PY'
 import json
 import sys
@@ -106,7 +216,7 @@ wait_for_blocked_challenge_metrics() {
 
   for _ in $(seq 1 "$attempts"); do
     local stats
-    stats="$(curl -fsS http://localhost:8082/v1/analytics/stats)"
+    stats="$(http_get http://localhost:8082/v1/analytics/stats)"
 
     if python3 - "$stats" <<'PY'
 import json
