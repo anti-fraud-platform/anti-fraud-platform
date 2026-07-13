@@ -82,3 +82,62 @@ func TestBlacklistEndpointNotEmpty(t *testing.T) {
 		t.Errorf("Regression failed: expected blacklist response to not be empty, but got total=%d, items=%d", resp.Total, len(resp.Items))
 	}
 }
+
+func TestStatsHandlerCostPerClickCalculation(t *testing.T) {
+	setupTestDB(t)
+
+	testCampaignID := "test_cpc_campaign_999"
+	testCPC := 15.50
+	testBlockedClicks := 4
+
+	_, err := db.Exec(`
+		INSERT INTO campaigns (campaign_id, cost_per_click) 
+		VALUES ($1, $2) 
+		ON CONFLICT (campaign_id) DO UPDATE SET cost_per_click = $2`,
+		testCampaignID, testCPC)
+	if err != nil {
+		t.Skipf("Skipping test: campaigns table might not exist yet (%v)", err)
+	}
+	defer db.Exec("DELETE FROM campaigns WHERE campaign_id = $1", testCampaignID)
+
+	for i := 0; i < testBlockedClicks; i++ {
+		_, err := db.Exec(`
+			INSERT INTO click_logs (ip, campaign_id, is_bot, reason, processed_at) 
+			VALUES ($1, $2, true, 'test_cpc_check', NOW())`,
+			fmt.Sprintf("10.0.0.%d", i), testCampaignID)
+		if err != nil {
+			t.Fatalf("Failed to insert test click log: %v", err)
+		}
+	}
+	defer db.Exec("DELETE FROM click_logs WHERE campaign_id = $1", testCampaignID)
+
+	req := httptest.NewRequest("GET", "/v1/analytics/stats", nil)
+	w := httptest.NewRecorder()
+	statsHandler(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %d", w.Code)
+	}
+
+	var resp StatsResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("Failed to parse stats response JSON: %v", err)
+	}
+
+	var found bool
+	expectedSavedMoney := float64(testBlockedClicks) * testCPC // 4 * 15.50 = 62.00
+
+	for _, camp := range resp.Campaigns {
+		if camp.CampaignID == testCampaignID {
+			found = true
+			if camp.SavedMoneyUSD < expectedSavedMoney-0.01 || camp.SavedMoneyUSD > expectedSavedMoney+0.01 {
+				t.Errorf("Expected SavedMoneyUSD to be ~%.2f (based on real CPC), but got %.2f", expectedSavedMoney, camp.SavedMoneyUSD)
+			}
+			break
+		}
+	}
+
+	if !found {
+		t.Errorf("Test campaign %s not found in stats response. Campaigns returned: %v", testCampaignID, resp.Campaigns)
+	}
+}
