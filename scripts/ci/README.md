@@ -6,6 +6,18 @@ Human-friendly entry points:
 - `make ci-compose-smoke` runs the full smoke suite
 - `make ci-compose-down` tears everything down
 
+CI uses `docker-compose.ci.yml`, not the main `docker-compose.yml`.
+Reason: GitLab runs Docker inside Docker, and nested bind mounts from `/builds/...`
+are unreliable there. The CI compose file packages nginx assets and GeoIP data into
+images instead of mounting them from the repo checkout.
+
+Transport mode depends on where the checks run:
+
+- Local shell: checks call `localhost` directly.
+- GitLab dind: checks use `SMOKE_TRANSPORT=compose_exec` and run HTTP probes from
+  inside the target containers, because published ports from the dind daemon are
+  not exposed back into the job container as plain `localhost`.
+
 If you want only one check, run one of these:
 
 - `make ci-check-wait`

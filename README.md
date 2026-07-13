@@ -21,6 +21,8 @@ Each click goes through four checks: automated user-agent detection, a GeoIP / A
 
 The engine no longer exposes a port directly to the host. All click traffic goes through nginx on port 9090.
 
+Monitoring and VM load-test flow for Week 6: [docs/MONITORING_LOADTEST.md](docs/MONITORING_LOADTEST.md)
+
 ## Database
 
 PostgreSQL is the only persistent store. The schema is in `deployments/init-db.sql` and runs automatically on first `docker compose up`.
@@ -217,13 +219,47 @@ make ci-compose-smoke
 make ci-compose-down
 ```
 
-### 6. Run the load test (optional but recommended)
+### 6. Start monitoring (optional but recommended)
 
 ```bash
-go run ./cmd/generator/ -attack -workers 10 -duration 30s
+COMPOSE_PROFILES=monitoring docker compose up --build -d
 ```
 
-Expected: catch rate above 99% by the end, 429s dominating the output after the first second. See [Traffic generator](#traffic-generator) below for full expected output.
+Open:
+
+- Grafana: `http://localhost:3000`
+- Prometheus: `http://localhost:9091`
+
+Grafana login defaults to `admin / admin`.
+
+The provisioned dashboard already shows:
+
+- request rate on `/v1/click`
+- `200 / 403 / 429` over time
+- `p95` click latency
+- engine goroutine count
+- Redis / PostgreSQL health
+- node CPU / memory
+
+### 7. Run the Week 6 load tests
+
+Real-click ramp:
+
+```bash
+bash scripts/loadtest/run_k6.sh k6_real_click_ramp.js
+```
+
+Mixed screenshot run:
+
+```bash
+bash scripts/loadtest/run_k6.sh k6_status_mix.js
+```
+
+If you are targeting the university VM instead of local Docker, point both commands at the VM gateway:
+
+```bash
+BASE_URL=http://10.93.26.161:9090 bash scripts/loadtest/run_k6.sh k6_real_click_ramp.js
+```
 
 ### Tearing down
 
