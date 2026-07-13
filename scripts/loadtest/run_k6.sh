@@ -16,11 +16,16 @@ summary_file="$output_dir/${script_name%.js}-$timestamp.json"
 
 if command -v k6 >/dev/null 2>&1; then
 	k6 run --summary-export "$summary_file" "$SCRIPT_DIR/$script_name" "$@"
+	if [ ! -f "$summary_file" ]; then
+		printf 'k6 finished but did not write summary file: %s\n' "$summary_file" >&2
+		exit 1
+	fi
 	printf 'Saved k6 summary to %s\n' "$summary_file"
 	exit 0
 fi
 
 docker run --rm \
+	--user "$(id -u):$(id -g)" \
 	-v "$SCRIPT_DIR:/scripts:ro" \
 	-v "$output_dir:/results" \
 	-e BASE_URL="${BASE_URL:-http://localhost:9090}" \
@@ -35,5 +40,10 @@ docker run --rm \
 	-e DURATION="${DURATION:-}" \
 	grafana/k6:0.52.0 \
 	run --summary-export "/results/$(basename "$summary_file")" "/scripts/$script_name" "$@"
+
+if [ ! -f "$summary_file" ]; then
+	printf 'k6 container finished but did not write summary file: %s\n' "$summary_file" >&2
+	exit 1
+fi
 
 printf 'Saved k6 summary to %s\n' "$summary_file"

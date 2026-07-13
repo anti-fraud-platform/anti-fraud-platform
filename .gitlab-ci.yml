@@ -85,10 +85,7 @@ deploy_vm:
       docker compose up --build -d &&
       docker compose restart nginx_engine &&
       docker compose ps &&
-      curl -fsS http://localhost:9090/v1/challenge >/dev/null &&
-      curl -fsS http://localhost:8082/v1/analytics/stats >/dev/null &&
-      curl -fsS http://localhost:9091/-/ready >/dev/null &&
-      curl -fsS http://localhost:3000/api/health | grep -q '\"database\":\"ok\"'"
+      bash scripts/deploy/vm_smoke.sh"
   needs:
     - backend
     - frontend
