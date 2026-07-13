@@ -94,3 +94,23 @@ This intentionally creates:
 - `403` from a GeoIP-blocked IP through `X-Forwarded-For`
 
 Use this run when you need a clear Grafana screenshot for the report.
+
+## 6. Example combined VM run
+
+The screenshot below shows one real VM session where:
+
+1. `k6_status_mix.js` was run first
+2. `k6_real_click_ramp.js` was run right after it
+
+![Combined Grafana run](../pics/image.png)
+
+How to read it:
+
+- the short earlier burst is the mixed-status pass used to generate visible `200 / 403 / 429`
+- the longer rising curve is the real-click ramp
+- the click request rate peaks at about `69.7 req/s`
+- `p95` click latency stays almost flat
+- Redis and PostgreSQL stay `UP`
+- CPU and memory remain stable during the run
+
+This pattern is important for the final report. It suggests that the first visible degradation comes from the anti-fraud policy rejecting more traffic, not from the VM, PostgreSQL, Redis, or the Go services becoming unhealthy.
