@@ -694,3 +694,95 @@ func TestHandleChallengeRejectsNonGET(t *testing.T) {
 		t.Fatalf("expected 405 for POST /v1/challenge, got %d", rr.Code)
 	}
 }
+// ============================================================================
+// Tier 2: dynamic blacklist TTL (15-minute auto-expiring block)
+// ============================================================================
+
+// Unit-level: exercises promoteToDynamicBlacklist / isDynamicBlacklisted
+// directly, isolated from the risk-scoring logic that decides *when* to
+// promote (that part is already covered by the risk-score tests above).
+func TestPromoteToDynamicBlacklistSetsExpiringKey(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb = redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer rdb.Close()
+
+	ip := "88.88.88.88"
+	if isDynamicBlacklisted(ip) {
+		t.Fatalf("expected IP to not be blacklisted before promotion")
+	}
+
+	promoteToDynamicBlacklist(ip, rdb)
+
+	if !isDynamicBlacklisted(ip) {
+		t.Fatalf("expected IP to be blacklisted immediately after promotion")
+	}
+
+	ttl := mr.TTL(dynBlacklistKeyPrefix + ip)
+	if ttl <= 0 || ttl > dynBlacklistBlockTTL {
+		t.Fatalf("expected a positive TTL <= %v on the blacklist key, got %v", dynBlacklistBlockTTL, ttl)
+	}
+
+	mr.FastForward(dynBlacklistBlockTTL + time.Second)
+
+	if isDynamicBlacklisted(ip) {
+		t.Fatalf("expected IP to no longer be blacklisted after TTL elapsed")
+	}
+}
+
+// Integration-level: goes through the real handleClick path — promoted IP
+// gets hard-blocked with 403, then automatically un-blocked once the TTL
+// elapses, with no manual cleanup step required.
+func TestHandleClickDynamicBlacklistBlocksThenExpiresAfterTTL(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb = redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer rdb.Close()
+
+	geoResolver = nil
+	geoPolicy = geopolicy.Config{}
+	batchLogger = logger.NewBatchLogger(nil, 100, 1000)
+	maxRate = 5
+
+	origChallenge := requireChallenge
+	origHeaderCheck := requireHeaderCheck
+	requireChallenge = false
+	requireHeaderCheck = false
+	defer func() {
+		requireChallenge = origChallenge
+		requireHeaderCheck = origHeaderCheck
+	}()
+
+	ip := "77.77.77.77"
+	body := `{"user_agent":"test-agent","campaign_id":"camp_dynbl","timestamp":123456789}`
+
+	// Sanity check: before promotion, a normal click succeeds.
+	rr := performClickRequest(http.MethodPost, body, map[string]string{
+		"Content-Type":    "application/json",
+		"X-Forwarded-For": ip,
+	})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected clean click to succeed before blacklisting, got %d", rr.Code)
+	}
+
+	// Simulate having crossed the risk-score/violation threshold, the way
+	// incrementDynamicBlacklistCounter would — isolates the TTL behavior
+	// from the risk-scoring logic itself.
+	promoteToDynamicBlacklist(ip, rdb)
+
+	rr = performClickRequest(http.MethodPost, body, map[string]string{
+		"Content-Type":    "application/json",
+		"X-Forwarded-For": ip,
+	})
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected promoted IP to be hard-blocked with 403, got %d, body=%s", rr.Code, rr.Body.String())
+	}
+
+	mr.FastForward(dynBlacklistBlockTTL + time.Second)
+
+	rr = performClickRequest(http.MethodPost, body, map[string]string{
+		"Content-Type":    "application/json",
+		"X-Forwarded-For": ip,
+	})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected block to have expired after TTL elapsed, got %d", rr.Code)
+	}
+}

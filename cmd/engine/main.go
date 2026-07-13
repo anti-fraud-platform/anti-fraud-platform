@@ -19,6 +19,7 @@ import (
 	"anti-fraud/internal/geopolicy"
 	"anti-fraud/internal/headercheck"
 	"anti-fraud/internal/logger"
+	"anti-fraud/internal/observability"
 
 	_ "github.com/lib/pq"
 	"github.com/redis/go-redis/v9"
@@ -57,27 +58,32 @@ var (
 	requireChallenge   = true
 	requireHeaderCheck = true
 	// Tier 2: risk threshold and dynamic blacklist settings
-	riskThreshold         = 3                      // score >= this => blocked as "risk_score_exceeded"
-	dynBlacklistThreshold = 5                      // 5+ flagged hits in window
-	dynBlacklistWindow    = time.Hour              // rolling window for auto-promotion
-	dynBlacklistSetKey    = "af:dynamic_blacklist" // Redis set of permanently blocked IPs
-	rateKeyPrefix         = "rate:fp:"             // new prefix for fingerprint-based rate limiting
+	riskThreshold         = 3                       // score >= this => blocked as "risk_score_exceeded"
+	dynBlacklistThreshold = 5                       // 5+ flagged hits in window
+	dynBlacklistWindow    = time.Hour               // rolling window for auto-promotion
+	dynBlacklistKeyPrefix = "af:dynamic_blacklist:" // per-IP key, TTL-based block
+	dynBlacklistBlockTTL  = 15 * time.Minute        // how long an IP stays blocked once promoted
+	rateKeyPrefix         = "rate:fp:"              // new prefix for fingerprint-based rate limiting
 )
 
 // healthHandler returns the health status of Redis and PostgreSQL.
 func healthHandler(w http.ResponseWriter, r *http.Request) {
 	status := map[string]interface{}{}
 	// Redis
-	if err := rdb.Ping(ctx).Err(); err != nil {
+	if err := rdb.Ping(r.Context()).Err(); err != nil {
 		status["redis"] = "unhealthy"
+		observability.SetDependencyStatus("engine", "redis", false)
 	} else {
 		status["redis"] = "healthy"
+		observability.SetDependencyStatus("engine", "redis", true)
 	}
 	// PostgreSQL
-	if err := db.Ping(); err != nil {
+	if err := db.PingContext(r.Context()); err != nil {
 		status["postgres"] = "unhealthy"
+		observability.SetDependencyStatus("engine", "postgres", false)
 	} else {
 		status["postgres"] = "healthy"
+		observability.SetDependencyStatus("engine", "postgres", true)
 	}
 	status["geoip_loaded"] = geoResolver != nil && geoResolver.HasAny()
 	status["geoip_policy_enabled"] = geoPolicy.Enabled()
@@ -129,7 +135,7 @@ func main() {
 		log.Fatalf("Failed to apply PostgreSQL schema: %v", err)
 	}
 	log.Println("PostgreSQL schema is up to date")
-	
+
 	var errs []error
 	geoResolver, errs = geoiputil.OpenBestEffort(geoiputil.PathsFromEnv())
 	for _, openErr := range errs {
@@ -157,12 +163,24 @@ func main() {
 
 	loadFeatureToggles()
 
-	http.HandleFunc("/v1/click", handleClick)
-	http.HandleFunc("/v1/challenge", handleChallenge)
+	observability.StartDependencyMonitor(ctx, "engine", 5*time.Second, map[string]observability.ProbeFunc{
+		"redis": func(ctx context.Context) error {
+			return rdb.Ping(ctx).Err()
+		},
+		"postgres": func(ctx context.Context) error {
+			return db.PingContext(ctx)
+		},
+	})
 
-	log.Println("Core Engine API Gateway started on :8080")
-	http.HandleFunc("/health", healthHandler)
-	if err := http.ListenAndServe(":8080", nil); err != nil {
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", observability.MetricsHandler())
+	mux.Handle("/health", observability.Middleware("engine", "/health", http.HandlerFunc(healthHandler)))
+	mux.Handle("/v1/challenge", observability.Middleware("engine", "/v1/challenge", http.HandlerFunc(handleChallenge)))
+	mux.Handle("/v1/click", observability.Middleware("engine", "/v1/click", http.HandlerFunc(handleClick)))
+
+	port := getEnv("ENGINE_PORT", getEnv("PORT", "8080"))
+	log.Printf("Core Engine API Gateway started on :%s", port)
+	if err := http.ListenAndServe(":"+port, mux); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -468,24 +486,38 @@ func fingerprint(r *http.Request) string {
 
 // isDynamicBlacklisted checks if IP is in the dynamic blacklist (Redis set).
 func isDynamicBlacklisted(ip string) bool {
-	ok, err := rdb.SIsMember(ctx, dynBlacklistSetKey, ip).Result()
+	exists, err := rdb.Exists(ctx, dynBlacklistKeyPrefix+ip).Result()
 	if err != nil {
-		log.Printf("Redis SIsMember error: %v", err)
+		log.Printf("Redis Exists error: %v", err)
 		return false
 	}
-	return ok
+	return exists > 0
 }
 
 // promoteToDynamicBlacklist adds an IP to the persistent dynamic blacklist.
+// It stores the IP in Redis for fast blocking and in PostgreSQL for analytics.
 func promoteToDynamicBlacklist(ip string, client *redis.Client) {
 	if client == nil {
 		return
 	}
-	if err := client.SAdd(ctx, dynBlacklistSetKey, ip).Err(); err != nil {
+	// Add to Redis set for fast blocking
+	if err := client.Set(ctx, dynBlacklistKeyPrefix+ip, "1", dynBlacklistBlockTTL).Err(); err != nil {
 		log.Printf("Failed to add IP to dynamic blacklist: %v", err)
 		return
 	}
-	log.Printf("IP %s promoted to dynamic blacklist", ip)
+	log.Printf("IP %s promoted to dynamic blacklist for %s", ip, dynBlacklistBlockTTL)
+
+	// Persist to PostgreSQL for analytics queries
+	if db != nil {
+		_, err := db.Exec(`
+            INSERT INTO dynamic_blacklist (ip, created_at, reason)
+            VALUES ($1, NOW(), 'dynamic_blacklist')
+            ON CONFLICT (ip) DO UPDATE SET created_at = NOW(), reason = 'dynamic_blacklist'
+        `, ip)
+		if err != nil {
+			log.Printf("Failed to insert IP into dynamic_blacklist table: %v", err)
+		}
+	}
 }
 
 // incrementDynamicBlacklistCounter increments a per-IP counter and promotes if threshold is reached.

@@ -1,0 +1,45 @@
+# Task Report: Replace Flat CPC with Per‑Campaign Cost
+
+## 1. Objective
+The analytics service previously used a hard‑coded constant of **$5.00** to compute `saved_money_usd` and `budget_saved`.  
+This ticket required replacing that constant with the **real cost‑per‑click (CPC)** defined per campaign in the `campaigns` table.
+
+## 2. Changes Made
+
+### 2.1 Database Schema
+No schema changes were required – the `campaigns` table already contained a `cost_per_click` column (type `numeric`, default 5.00).  
+The existing `COALESCE(cam.cost_per_click, 5.00)` in the query ensured fallback to 5.00 when a campaign is missing.
+
+### 2.2 Code Changes (analytics/main.go)
+- Removed the old constant `costPerClickUSD` (no longer used).
+- In `statsHandler`, added a variable `totalSaved` to accumulate savings.
+- Inside the per‑campaign loop, computed `saved = blocked * cpc` and added it to `totalSaved`.
+- Changed the type of `cpc` from `int64` to `float64` to correctly handle `numeric(10,2)` values from PostgreSQL.
+- In the response, set `SavedMoneyUSD` and `BudgetSaved` to `totalSaved`.
+
+**Key code snippet:**
+```go
+var totalSaved float64
+for rows.Next() {
+    var campID string
+    var cpc float64
+    var total, blocked int64
+    if err := rows.Scan(&campID, &cpc, &total, &blocked); err != nil {
+        log.Printf("Error scanning campaign stats: %v", err)
+        continue
+    }
+    saved := float64(blocked) * cpc
+    campaigns = append(campaigns, CampaignStats{
+        CampaignID:    campID,
+        TotalClicks:   total,
+        BlockedBots:   blocked,
+        SavedMoneyUSD: saved,
+    })
+    totalSaved += saved
+}
+// ...
+StatsResponse{
+    SavedMoneyUSD: totalSaved,
+    BudgetSaved:   totalSaved,
+    // ...
+}

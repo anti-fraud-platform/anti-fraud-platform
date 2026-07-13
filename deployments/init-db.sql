@@ -27,6 +27,9 @@ ALTER TABLE click_logs
     ALTER COLUMN is_bot SET DEFAULT FALSE,
     ALTER COLUMN processed_at SET DEFAULT NOW();
 
+
+CREATE INDEX IF NOT EXISTS idx_click_logs_reason ON click_logs(reason);
+
 CREATE INDEX IF NOT EXISTS idx_click_logs_ip
     ON click_logs (ip);
 
