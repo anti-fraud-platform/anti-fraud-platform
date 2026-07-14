@@ -12,8 +12,8 @@ const client = axios.create({
 //   allowed_count   - clicks that were not blocked
 //   blocked_count   - clicks flagged as bots
 //   blocked_bots    - same as blocked_count (kept for backward compatibility)
-//   saved_money_usd - money saved (blocked * CPC)
-//   budget_saved    - ad budget saved (blocked_count * fixed CPC)
+//   saved_money_usd - money saved, summed across campaigns using each one's real cost_per_click
+//   budget_saved    - same total as saved_money_usd (kept as a separate field for backward compatibility)
 //   top_blocked_ips - [{ ip, count }] top offending IPs
 //   campaigns       - [{ campaign_id, total_clicks, blocked_bots, saved_money_usd }]
 export async function fetchAnalyticsStats() {
@@ -24,7 +24,8 @@ export async function fetchAnalyticsStats() {
 // GET /v1/analytics/logs
 // Query params: page, limit, campaign_id, is_bot, reason
 // Backend returns: { data: [...ClickLogEntry], total, page, limit, total_pages }
-// ClickLogEntry: id, ip, campaign_id, user_agent, is_bot, reason, processed_at.
+// ClickLogEntry: id, ip, campaign_id, user_agent, is_bot, reason, processed_at, country, city.
+//   country - ISO-3166 alpha-2 code from GeoIP (e.g. "RU"), empty if unresolved.
 export async function fetchAnalyticsLogs(params = {}) {
   const response = await client.get('/v1/analytics/logs', { params })
   return response.data

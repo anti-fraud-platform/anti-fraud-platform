@@ -519,17 +519,18 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 6,
-        "w": 8,
-        "x": 0,
-        "y": 24
+        "h": 8,
+        "w": 4,
+        "x": 12,
+        "y": 16
       },
-      "id": 6,
+      "id": 8,
       "options": {
         "colorMode": "value",
         "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
+        "percentChangeColorMode": "standard",
         "reduceOptions": {
           "calcs": [
             "lastNotNull"
@@ -541,16 +542,17 @@
         "textMode": "auto",
         "wideLayout": true
       },
+      "pluginVersion": "11.1.4",
       "targets": [
         {
           "editorMode": "code",
-          "expr": "max(antifraud_dependency_up{service=\"engine\",dependency=\"redis\"})",
-          "legendFormat": "engine -> redis",
+          "expr": "max(antifraud_dependency_up{service=\"analytics\",dependency=\"postgres\"})",
+          "legendFormat": "analytics -> postgres",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Engine Redis Health",
+      "title": "Analytics PostgreSQL Health",
       "type": "stat"
     },
     {
@@ -594,10 +596,10 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 6,
-        "w": 8,
-        "x": 8,
-        "y": 24
+        "h": 8,
+        "w": 4,
+        "x": 16,
+        "y": 16
       },
       "id": 7,
       "options": {
@@ -605,6 +607,7 @@
         "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
+        "percentChangeColorMode": "standard",
         "reduceOptions": {
           "calcs": [
             "lastNotNull"
@@ -616,6 +619,7 @@
         "textMode": "auto",
         "wideLayout": true
       },
+      "pluginVersion": "11.1.4",
       "targets": [
         {
           "editorMode": "code",
@@ -669,17 +673,18 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 6,
-        "w": 8,
-        "x": 16,
-        "y": 24
+        "h": 8,
+        "w": 4,
+        "x": 20,
+        "y": 16
       },
-      "id": 8,
+      "id": 6,
       "options": {
         "colorMode": "value",
         "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
+        "percentChangeColorMode": "standard",
         "reduceOptions": {
           "calcs": [
             "lastNotNull"
@@ -691,22 +696,22 @@
         "textMode": "auto",
         "wideLayout": true
       },
+      "pluginVersion": "11.1.4",
       "targets": [
         {
           "editorMode": "code",
-          "expr": "max(antifraud_dependency_up{service=\"analytics\",dependency=\"postgres\"})",
-          "legendFormat": "analytics -> postgres",
+          "expr": "max(antifraud_dependency_up{service=\"engine\",dependency=\"redis\"})",
+          "legendFormat": "engine -> redis",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Analytics PostgreSQL Health",
+      "title": "Engine Redis Health",
       "type": "stat"
     }
   ],
   "refresh": "5s",
   "schemaVersion": 39,
-  "style": "dark",
   "tags": [
     "anti-fraud",
     "monitoring"

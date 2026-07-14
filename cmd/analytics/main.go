@@ -79,6 +79,8 @@ type ClickLogEntry struct {
 	IsBot       bool      `json:"is_bot"`
 	Reason      string    `json:"reason"`
 	ProcessedAt time.Time `json:"processed_at"`
+	Country     string    `json:"country"` // ISO-3166 alpha-2, e.g. "RU"; empty if GeoIP couldn't resolve the IP
+	City        string    `json:"city"`
 }
 
 // LogsResponse is the paginated response for /v1/analytics/logs.
@@ -193,24 +195,24 @@ func statsHandler(w http.ResponseWriter, r *http.Request) {
 		deltaBlocked = float64(blockedCount-prevBlocked) / float64(prevBlocked) * 100
 	}
 
-	// Per‑campaign stats with custom cost per click (from campaigns table, default 5.00)
-	rows, err := db.Query(`
-        SELECT 
-            c.campaign_id,
-            COALESCE(cam.cost_per_click, 5.00) as cpc,
-            COUNT(*) as total,
-            COUNT(*) FILTER (WHERE is_bot = true) as blocked
-        FROM click_logs c
-        LEFT JOIN campaigns cam ON c.campaign_id = cam.campaign_id
-        GROUP BY c.campaign_id, cam.cost_per_click
-        ORDER BY c.campaign_id
-    `)
-	if err != nil {
-		log.Printf("Error querying campaign stats: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
-	defer rows.Close()
+    // Per‑campaign stats with custom cost per click (from campaigns table, default 5.00)
+    rows, err := db.Query(`
+		SELECT 
+			COALESCE(c.campaign_id, 'unknown') as campaign_id,
+			COALESCE(cam.cost_per_click, 5.00) as cpc,
+			COUNT(*) as total,
+			COUNT(*) FILTER (WHERE is_bot = true) as blocked
+		FROM click_logs c
+		LEFT JOIN campaigns cam ON COALESCE(c.campaign_id, 'unknown') = cam.campaign_id
+		GROUP BY COALESCE(c.campaign_id, 'unknown'), cam.cost_per_click
+		ORDER BY COALESCE(c.campaign_id, 'unknown')
+	`)
+    if err != nil {
+        log.Printf("Error querying campaign stats: %v", err)
+        http.Error(w, "Internal server error", http.StatusInternalServerError)
+        return
+    }
+    defer rows.Close()
 
 	var totalSaved float64
 	campaigns := []CampaignStats{}
@@ -412,7 +414,7 @@ func logsHandler(w http.ResponseWriter, r *http.Request) {
 	totalPages := int((total + int64(limit) - 1) / int64(limit))
 
 	dataQuery := fmt.Sprintf(`
-		SELECT id, ip, campaign_id, user_agent, is_bot, reason, processed_at
+		SELECT id, ip, campaign_id, user_agent, is_bot, reason, processed_at, country, city
 		FROM click_logs
 		%s
 		ORDER BY processed_at DESC
@@ -431,6 +433,7 @@ func logsHandler(w http.ResponseWriter, r *http.Request) {
 	logs := []ClickLogEntry{}
 	for rows.Next() {
 		var entry ClickLogEntry
+		var country, city sql.NullString
 		if err := rows.Scan(
 			&entry.ID,
 			&entry.IP,
@@ -439,9 +442,17 @@ func logsHandler(w http.ResponseWriter, r *http.Request) {
 			&entry.IsBot,
 			&entry.Reason,
 			&entry.ProcessedAt,
+			&country,
+			&city,
 		); err != nil {
 			log.Printf("Error scanning log row: %v", err)
 			continue
+		}
+		if country.Valid {
+			entry.Country = country.String
+		}
+		if city.Valid {
+			entry.City = city.String
 		}
 		logs = append(logs, entry)
 	}
