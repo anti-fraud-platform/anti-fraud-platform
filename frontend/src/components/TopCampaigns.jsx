@@ -27,15 +27,15 @@ function TopCampaigns({ campaigns }) {
       ) : (
         <>
           {/* Fixed-height body sized for exactly 4 rows (header + 4 rows + gaps + padding) */}
-          <div className="h-[160px] overflow-y-auto p-4 flex flex-col gap-2.5">
-            <div className="flex items-center gap-2 text-[10px] text-text-muted uppercase tracking-wide sticky top-0 bg-surface">
+          <div className="h-[160px] overflow-y-auto flex flex-col gap-2.5">
+            <div className="flex items-center gap-2 p-4 text-[10px] text-text-muted uppercase tracking-wide sticky top-0 bg-surface">
               <span className="w-24 flex-shrink-0">Campaign</span>
               <span className="flex-1" />
               <span className="w-14 text-right flex-shrink-0">Blocked</span>
               <span className="w-16 text-right flex-shrink-0">% Blocked</span>
             </div>
             {visible.map((r) => (
-              <div key={r.id} className="flex items-center gap-2 text-xs">
+              <div key={r.id} className="flex items-center gap-2 text-xs px-4">
                 <span className="font-mono text-text-main w-24 truncate flex-shrink-0">{r.id}</span>
                 <div className="flex-1 h-1.5 rounded-full bg-chart-bar overflow-hidden">
                   <div

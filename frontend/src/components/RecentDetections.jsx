@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useLogs } from '../hooks/useLogs';
+import { fetchAnalyticsLogs } from '../api/analytics';
 
 const LAYER_INFO = {
   suspicious_agent: { n: 1, label: 'User-Agent Check', color: '#8b7cf6' },
@@ -61,11 +62,16 @@ function RecentDetections() {
   const [page, setPage] = useState(1);
   const { data } = useLogs({ page, limit: 5 }, 2500);
 
+  const [CSVLoading, setCSVLoading] = useState(false);
+
   const rows = data?.data ?? [];
   const total = data?.total ?? 0;
   const totalPages = data?.total_pages ?? 1;
 
-  const exportToCSV = () => {
+  const exportToCSV = async () => {
+    if(CSVLoading) return;
+    setCSVLoading(true);
+
     if (total === 0) {
       alert('No data to export');
       return;
@@ -75,31 +81,40 @@ function RecentDetections() {
       'Time', 'Layer', 'Reason', 'Campaign', 'IP Address', 'Location', 'Status', 'Method', 'User Agent'
     ];
 
-    const csvContent = [
-      headers.join(','),
-      ...rows.map(row => [
-        timeOf(row.processed_at),
-        ( !row.is_bot ? "Allowed" : LAYER_INFO[row.reason]?.label ),
-        ( !row.is_bot ? '' : (row.reason || '') ),
-        csvEscape(row.campaign_id),
-        row.ip,
-        csvEscape(locationLabel(row) ?? ''),
-        row.is_bot ? "Blocked" : "Allowed",
-        "POST",
-        csvEscape(row.user_agent)
-      ].join(','))
-    ].join('\n');
+    try {
+      const loadedData = await fetchAnalyticsLogs({ limit: 100 });
+      const loadedRows = loadedData?.data ?? [];
 
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    
-    link.setAttribute('href', url);
-    link.setAttribute('download', `recent_detections_export_${new Date().toISOString().slice(0,10)}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+      const csvContent = [
+        headers.join(','),
+        ...loadedRows.map(row => [
+          timeOf(row.processed_at),
+          ( !row.is_bot ? "Allowed" : LAYER_INFO[row.reason]?.label ),
+          ( !row.is_bot ? '' : (row.reason || '') ),
+          csvEscape(row.campaign_id),
+          row.ip,
+          csvEscape(locationLabel(row) ?? ''),
+          row.is_bot ? "Blocked" : "Allowed",
+          "POST",
+          csvEscape(row.user_agent)
+        ].join(','))
+      ].join('\n');
+
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const link = document.createElement('a');
+      const url = URL.createObjectURL(blob);
+      
+      link.setAttribute('href', url);
+      link.setAttribute('download', `recent_detections_export_${new Date().toISOString().slice(0,10)}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } finally {
+      setCSVLoading(false);
+    }
+
+   
   };
 
   return (
@@ -111,7 +126,7 @@ function RecentDetections() {
         <button
           type="button"
           onClick={exportToCSV}
-          disabled={total === 0}
+          disabled={total === 0 || CSVLoading}
           className="ml-auto px-3 py-1 rounded border border-border disabled:opacity-40 hover:bg-surface transition-colors text-xs text-text-muted"
         >
         Export to CSV
