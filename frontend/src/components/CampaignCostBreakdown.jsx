@@ -75,7 +75,7 @@ function CampaignCostBreakdown({ campaigns }) {
       )}
 
       {rows.length > 0 && (
-        <div className="flex items-center justify-between px-4 py-2.5 border-t border-border bg-surface">
+        <div className="flex items-center justify-between px-4 py-2.5 border-t border-border bg-surface grow">
           <span className="text-xs font-medium text-text-muted">Total saved</span>
           <span className="text-sm font-bold text-success">{formatUSD(totalSaved)}</span>
         </div>
