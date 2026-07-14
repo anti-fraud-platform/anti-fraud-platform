@@ -7,6 +7,7 @@ import ReasonBreakdownChart from '../components/ReasonBreakdownChart';
 import PipelineEffectiveness from '../components/PipelineEffectiveness';
 import DetectionPipeline from '../components/DetectionPipeline';
 import TopCampaigns from '../components/TopCampaigns';
+import CampaignCostBreakdown from '../components/CampaignCostBreakdown';
 import TrafficOverTime from '../components/TrafficOverTime';
 import BlockedByReason from '../components/BlockedByReason';
 import RecentDetections from '../components/RecentDetections';
@@ -86,8 +87,11 @@ function Dashboard() {
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
                 <TrafficOverTime trend={trend} />
                 <BlockedByReason />
-                <TopCampaigns campaigns={campaigns} />
+                <CampaignCostBreakdown campaigns={campaigns} />
               </div>
+
+              {/* Top campaigns */}
+              <TopCampaigns campaigns={campaigns} />
 
               {/* Recent detections */}
               <RecentDetections />

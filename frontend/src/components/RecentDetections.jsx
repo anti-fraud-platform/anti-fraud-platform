@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useLogs } from '../hooks/useLogs';
+import { fetchAnalyticsLogs } from '../api/analytics';
 
 const LAYER_INFO = {
   suspicious_agent: { n: 1, label: 'User-Agent Check', color: '#8b7cf6' },
@@ -11,21 +12,32 @@ const LAYER_INFO = {
   rate_limit_exceeded: { n: 5, label: 'Rate Limiter', color: '#fbbf24' },
 };
 
-// Location isn't in the backend data; derive a stable mock country from the IP
-// so each IP always shows the same flag (for the redesign only).
-const COUNTRIES = [
-  { flag: '🇺🇸', name: 'United States' },
-  { flag: '🇩🇪', name: 'Germany' },
-  { flag: '🇳🇱', name: 'Netherlands' },
-  { flag: '🇫🇷', name: 'France' },
-  { flag: '🇨🇦', name: 'Canada' },
-  { flag: '🇬🇧', name: 'United Kingdom' },
-  { flag: '🇯🇵', name: 'Japan' },
-];
-function countryFor(ip) {
-  let sum = 0;
-  for (let i = 0; i < (ip || '').length; i++) sum += ip.charCodeAt(i);
-  return COUNTRIES[sum % COUNTRIES.length];
+// Real GeoIP data from the backend (click_logs.country is a MaxMind
+// ISO-3166 alpha-2 code, e.g. "RU"). Empty when the IP couldn't be resolved
+// (private/reserved ranges like the docker bridge network, lookup miss, etc).
+const countryNames = (() => {
+  try {
+    return new Intl.DisplayNames(['en'], { type: 'region' });
+  } catch {
+    return null;
+  }
+})();
+
+function flagEmoji(iso) {
+  if (!iso || iso.length !== 2) return '🏳️';
+  const code = iso.toUpperCase();
+  return String.fromCodePoint(...[...code].map((c) => 0x1f1e6 - 65 + c.charCodeAt(0)));
+}
+
+function locationLabel(row) {
+  if (!row.country) return null;
+  let name = row.country;
+  try {
+    name = countryNames?.of(row.country.toUpperCase()) ?? row.country;
+  } catch {
+    // Intl.DisplayNames throws on codes it doesn't recognize; fall back to the raw code.
+  }
+  return row.city ? `${row.city}, ${name}` : name;
 }
 
 function timeOf(iso) {
@@ -48,13 +60,18 @@ function csvEscape(value) {
 
 function RecentDetections() {
   const [page, setPage] = useState(1);
-  const { data } = useLogs({ page, limit: 8 }, 2500);
+  const { data } = useLogs({ page, limit: 5 }, 2500);
+
+  const [CSVLoading, setCSVLoading] = useState(false);
 
   const rows = data?.data ?? [];
   const total = data?.total ?? 0;
   const totalPages = data?.total_pages ?? 1;
 
-  const exportToCSV = () => {
+  const exportToCSV = async () => {
+    if(CSVLoading) return;
+    setCSVLoading(true);
+
     if (total === 0) {
       alert('No data to export');
       return;
@@ -64,31 +81,40 @@ function RecentDetections() {
       'Time', 'Layer', 'Reason', 'Campaign', 'IP Address', 'Location', 'Status', 'Method', 'User Agent'
     ];
 
-    const csvContent = [
-      headers.join(','),
-      ...rows.map(row => [
-        timeOf(row.processed_at),
-        ( !row.is_bot ? "Allowed" : LAYER_INFO[row.reason]?.label ),
-        ( !row.is_bot ? '' : (row.reason || '') ),
-        csvEscape(row.campaign_id),
-        row.ip,
-        countryFor(row.ip).name,
-        row.is_bot ? "Blocked" : "Allowed",
-        "POST",
-        csvEscape(row.user_agent)
-      ].join(','))
-    ].join('\n');
+    try {
+      const loadedData = await fetchAnalyticsLogs({ limit: 100 });
+      const loadedRows = loadedData?.data ?? [];
 
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    
-    link.setAttribute('href', url);
-    link.setAttribute('download', `recent_detections_export_${new Date().toISOString().slice(0,10)}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+      const csvContent = [
+        headers.join(','),
+        ...loadedRows.map(row => [
+          timeOf(row.processed_at),
+          ( !row.is_bot ? "Allowed" : LAYER_INFO[row.reason]?.label ),
+          ( !row.is_bot ? '' : (row.reason || '') ),
+          csvEscape(row.campaign_id),
+          row.ip,
+          csvEscape(locationLabel(row) ?? ''),
+          row.is_bot ? "Blocked" : "Allowed",
+          "POST",
+          csvEscape(row.user_agent)
+        ].join(','))
+      ].join('\n');
+
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const link = document.createElement('a');
+      const url = URL.createObjectURL(blob);
+      
+      link.setAttribute('href', url);
+      link.setAttribute('download', `recent_detections_export_${new Date().toISOString().slice(0,10)}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } finally {
+      setCSVLoading(false);
+    }
+
+   
   };
 
   return (
@@ -100,7 +126,7 @@ function RecentDetections() {
         <button
           type="button"
           onClick={exportToCSV}
-          disabled={total === 0}
+          disabled={total === 0 || CSVLoading}
           className="ml-auto px-3 py-1 rounded border border-border disabled:opacity-40 hover:bg-surface transition-colors text-xs text-text-muted"
         >
         Export to CSV
@@ -130,7 +156,7 @@ function RecentDetections() {
             ) : (
               rows.map((row) => {
                 const layer = LAYER_INFO[row.reason];
-                const country = countryFor(row.ip);
+                const location = locationLabel(row);
                 return (
                   <tr key={row.id} className="border-t border-border">
                     <td className="px-4 py-2.5 whitespace-nowrap text-text-muted">{timeOf(row.processed_at)}</td>
@@ -160,9 +186,15 @@ function RecentDetections() {
                     <td className="px-4 py-2.5 whitespace-nowrap font-mono text-xs">{row.campaign_id}</td>
                     <td className="px-4 py-2.5 whitespace-nowrap font-mono text-xs">{row.ip}</td>
 
-                    {/* Location (mock) */}
+                    {/* Location - real GeoIP data (empty when the IP didn't resolve, e.g. internal/private ranges) */}
                     <td className="px-4 py-2.5 whitespace-nowrap text-xs">
-                      <span className="mr-1.5">{country.flag}</span>{country.name}
+                      {location ? (
+                        <>
+                          <span className="mr-1.5">{flagEmoji(row.country)}</span>{location}
+                        </>
+                      ) : (
+                        <span className="text-text-muted">—</span>
+                      )}
                     </td>
 
                     <td className="px-4 py-2.5 whitespace-nowrap">
