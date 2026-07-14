@@ -71,23 +71,33 @@ function RecentDetections() {
   const exportToCSV = async () => {
     if(CSVLoading) return;
     setCSVLoading(true);
-
-    if (total === 0) {
-      alert('No data to export');
-      return;
-    }
 								
     const headers = [
       'Time', 'Layer', 'Reason', 'Campaign', 'IP Address', 'Location', 'Status', 'Method', 'User Agent'
     ];
 
     try {
-      const loadedData = await fetchAnalyticsLogs({ limit: 100 });
-      const loadedRows = loadedData?.data ?? [];
+      let allRows = [];
+      let page = 1;
+      const limit = 100;
+      let totalPages = 1;
+
+      do {
+        const loadedData = await fetchAnalyticsLogs({ page, limit });
+        const loadedRows = loadedData?.data ?? [];
+        allRows = allRows.concat(loadedRows);
+        totalPages = loadedData?.total_pages ?? 1;
+        page++;
+      } while (page <= totalPages);
+
+      if (allRows.length === 0) {
+        alert('No data to export');
+        return;
+      }
 
       const csvContent = [
         headers.join(','),
-        ...loadedRows.map(row => [
+        ...allRows.map(row => [
           timeOf(row.processed_at),
           ( !row.is_bot ? "Allowed" : LAYER_INFO[row.reason]?.label ),
           ( !row.is_bot ? '' : (row.reason || '') ),

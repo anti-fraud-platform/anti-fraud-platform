@@ -1,16 +1,16 @@
 const SkeletonBlacklistRow = () => (
   <tr className="border-t border-border animate-pulse">
     <td className="px-3.5 py-2.5">
-      <div className="h-4 bg-gray-200 rounded w-20" />
+      <div className="h-4 bg-border rounded w-20" />
     </td>
     <td className="px-3.5 py-2.5">
-      <div className="h-4 bg-gray-200 rounded w-44" />
+      <div className="h-4 bg-border rounded w-44" />
     </td>
     <td className="px-3.5 py-2.5">
-      <div className="h-4 bg-gray-200 rounded w-32" />
+      <div className="h-4 bg-border rounded w-32" />
     </td>
     <td className="px-3.5 py-2.5">
-      <div className="h-4 bg-gray-200 rounded w-32" />
+      <div className="h-4 bg-border rounded w-32" />
     </td>
   </tr>
 );

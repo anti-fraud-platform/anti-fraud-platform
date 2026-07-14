@@ -98,7 +98,7 @@ function Layout({ title, error, children }) {
             </button>
 
             <div className="flex items-center gap-1.5 px-3 py-1.5 h-9 rounded-lg border border-border text-sm text-text-muted leading-5">
-              <span>May 10 - May 16, 2024</span>
+              <span>Last 7 days</span>
               <svg className="block flex-shrink-0" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <polyline points="6 9 12 15 18 9" />
               </svg>
