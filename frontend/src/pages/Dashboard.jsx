@@ -24,12 +24,16 @@ function Dashboard() {
   const { data, loading, error } = useStats(2500);
   const trend = useTrend(5000);
 
+  const totalDelta = data?.total_clicks_delta_percent ?? 0;
+  const blockedDelta = data?.blocked_count_delta_percent ?? 0;
+  const allowedDelta = totalDelta - blockedDelta;
+
   const statItems = data
     ? [
-        { label: 'Total clicks', value: formatNumber(data.total_clicks), danger: false, icon: <MousePointerClick/>, delta: '18.4%', deltaUp: true },
-        { label: 'Blocked clicks', value: formatNumber(data.blocked_count ?? data.blocked_bots), danger: true, icon: <ShieldAlert/>, delta: '24.6%', deltaUp: true },
-        { label: 'Allowed clicks', value: formatNumber(data.allowed_count ?? 0), danger: false, icon: <CheckCircle/>, delta: '11.2%', deltaUp: true },
-        { label: 'Active campaigns', value: formatNumber((data.campaigns ?? []).length), danger: false, icon: <Flag/>, delta: '2', deltaUp: true },
+        { label: 'Total clicks', value: formatNumber(data.total_clicks), danger: false, icon: <MousePointerClick/>, delta: Math.abs(totalDelta).toFixed(1) + '%', deltaUp: totalDelta >= 0 },
+        { label: 'Blocked clicks', value: formatNumber(data.blocked_count ?? data.blocked_bots), danger: true, icon: <ShieldAlert/>, delta: Math.abs(blockedDelta).toFixed(1) + '%', deltaUp: blockedDelta >= 0 },
+        { label: 'Allowed clicks', value: formatNumber(data.allowed_count ?? 0), danger: false, icon: <CheckCircle/>, delta: Math.abs(allowedDelta).toFixed(1) + '%', deltaUp: allowedDelta >= 0 },
+        { label: 'Active campaigns', value: formatNumber((data.campaigns ?? []).length), danger: false, icon: <Flag/>, delta: '', deltaUp: true },
       ]
     : [];
 
@@ -86,7 +90,7 @@ function Dashboard() {
               {/* Charts + top campaigns row */}
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
                 <TrafficOverTime trend={trend} />
-                <BlockedByReason />
+                <BlockedByReason trend={trend} />
                 <CampaignCostBreakdown campaigns={campaigns} />
               </div>
 

@@ -30,3 +30,10 @@ export async function fetchAnalyticsLogs(params = {}) {
   const response = await client.get('/v1/analytics/logs', { params })
   return response.data
 }
+
+// GET /v1/analytics/trend
+// Backend returns: { data: [{ date, total_clicks, allowed_count, blocked_count, breakdown }] }
+export async function fetchAnalyticsTrend() {
+  const response = await client.get('/v1/analytics/trend')
+  return response.data
+}
