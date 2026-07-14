@@ -79,8 +79,8 @@ type ClickLogEntry struct {
 	IsBot       bool      `json:"is_bot"`
 	Reason      string    `json:"reason"`
 	ProcessedAt time.Time `json:"processed_at"`
-	Country     string    `json:"country"` 
-	City        string    `json:"city"`  
+	Country     string    `json:"country"` // ISO-3166 alpha-2, e.g. "RU"; empty if GeoIP couldn't resolve the IP
+	City        string    `json:"city"`
 }
 
 // LogsResponse is the paginated response for /v1/analytics/logs.
