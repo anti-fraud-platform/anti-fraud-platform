@@ -16,6 +16,14 @@ function formatSource(source) {
     .join(' + ');
 }
 
+function csvEscape(value) {
+  const str = String(value ?? '');
+  if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
+    return '"' + str.replace(/"/g, '""') + '"';
+  }
+  return str;
+}
+
 function Blacklist() {
   const [loading, setLoading] = useState(true);
   const [blacklistData, setBlacklistData] = useState([]);
@@ -40,8 +48,6 @@ function Blacklist() {
         if (cancelled) return;
         console.error('Error fetching blocked IPs:', err);
         setError('Failed to load blocked IP data');
-
-        timer = setTimeout(fetchBlacklist, intervalMs);
       } finally {
         if (!cancelled) {
           setLoading(false);
@@ -50,10 +56,11 @@ function Blacklist() {
     }
 
     fetchBlacklist();
+    timer = setInterval(fetchBlacklist, intervalMs);
 
     return () => {
       cancelled = true;
-      clearTimeout(timer);
+      clearInterval(timer);
     };
   }, []);
 
@@ -66,10 +73,10 @@ function Blacklist() {
     const headers = ['IP', 'Source', 'Block Count', 'First Blocked', 'Last Blocked'];
     const rows = blacklistData.map(item => [
       item.ip,
-      formatSource(item.source),
+      csvEscape(formatSource(item.source)),
       item.block_count,
-      item.first_blocked,
-      item.last_blocked
+      csvEscape(item.first_blocked),
+      csvEscape(item.last_blocked)
     ]);
 
     const csvContent = [

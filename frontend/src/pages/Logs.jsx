@@ -26,6 +26,31 @@ function formatReason(reason, isBot) {
   return map[reason] || reason || '—';
 }
 
+const countryNames = (() => {
+  try {
+    return new Intl.DisplayNames(['en'], { type: 'region' });
+  } catch {
+    return null;
+  }
+})();
+
+function flagEmoji(iso) {
+  if (!iso || iso.length !== 2) return '🏳️';
+  const code = iso.toUpperCase();
+  return String.fromCodePoint(...[...code].map((c) => 0x1f1e6 - 65 + c.charCodeAt(0)));
+}
+
+function locationLabel(row) {
+  if (!row.country) return null;
+  let name = row.country;
+  try {
+    name = countryNames?.of(row.country.toUpperCase()) ?? row.country;
+  } catch {
+    // Intl.DisplayNames throws on codes it doesn't recognize; fall back to the raw code.
+  }
+  return row.city ? `${row.city}, ${name}` : name;
+}
+
 // Row tint by type — semi-transparent so it works in light AND dark themes.
 function rowTint(isBot, reason) {
   if (!isBot) return 'transparent';
@@ -109,6 +134,7 @@ function Logs() {
               <tr className="bg-surface text-text-muted text-left text-xs">
                 <th className="px-4 py-3 font-medium">IP</th>
                 <th className="px-4 py-3 font-medium">Campaign</th>
+                <th className="px-4 py-3 font-medium">Location</th>
                 <th className="px-4 py-3 font-medium">User-Agent</th>
                 <th className="px-4 py-3 font-medium">Reason</th>
                 <th className="px-4 py-3 font-medium">Date/Time</th>
@@ -116,23 +142,35 @@ function Logs() {
             </thead>
             <tbody>
               {loading && !data ? (
-                <tr><td colSpan={5} className="px-4 py-6 text-center text-text-muted">Loading...</td></tr>
+                <tr><td colSpan={6} className="px-4 py-6 text-center text-text-muted">Loading...</td></tr>
               ) : logs.length === 0 ? (
-                <tr><td colSpan={5} className="px-4 py-6 text-center text-text-muted">No logs found.</td></tr>
+                <tr><td colSpan={6} className="px-4 py-6 text-center text-text-muted">No logs found.</td></tr>
               ) : (
-                logs.map((log) => (
-                  <tr
-                    key={log.id}
-                    className="border-t border-border"
-                    style={{ backgroundColor: rowTint(log.is_bot, log.reason) }}
-                  >
-                    <td className="px-4 py-3 font-mono text-xs text-text-main">{log.ip}</td>
-                    <td className="px-4 py-3 text-text-main">{log.campaign_id}</td>
-                    <td className="px-4 py-3 max-w-[380px] truncate text-text-muted" title={log.user_agent}>{log.user_agent}</td>
-                    <td className="px-4 py-3 whitespace-nowrap text-text-main">{formatReason(log.reason, log.is_bot)}</td>
-                    <td className="px-4 py-3 whitespace-nowrap text-text-muted">{formatDate(log.processed_at)}</td>
-                  </tr>
-                ))
+                logs.map((log) => {
+                  const location = locationLabel(log);
+                  return (
+                    <tr
+                      key={log.id}
+                      className="border-t border-border"
+                      style={{ backgroundColor: rowTint(log.is_bot, log.reason) }}
+                    >
+                      <td className="px-4 py-3 font-mono text-xs text-text-main">{log.ip}</td>
+                      <td className="px-4 py-3 text-text-main">{log.campaign_id}</td>
+                      <td className="px-4 py-3 whitespace-nowrap text-xs">
+                        {location ? (
+                          <>
+                            <span className="mr-1.5">{flagEmoji(log.country)}</span>{location}
+                          </>
+                        ) : (
+                          <span className="text-text-muted">—</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 max-w-[380px] truncate text-text-muted" title={log.user_agent}>{log.user_agent}</td>
+                      <td className="px-4 py-3 whitespace-nowrap text-text-main">{formatReason(log.reason, log.is_bot)}</td>
+                      <td className="px-4 py-3 whitespace-nowrap text-text-muted">{formatDate(log.processed_at)}</td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
