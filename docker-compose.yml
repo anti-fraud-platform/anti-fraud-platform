@@ -72,6 +72,9 @@ services:
       DB_MAX_IDLE_CONNS: "10"
       REDIS_HOST: redis
       REDIS_PORT: "6379"
+      REQUIRE_AUTH: "false"
+      JWT_SECRET: "change-me-in-production"
+      ADMIN_PASSWORD: "admin123"
     ports:
       - "8082:8081"
     depends_on:

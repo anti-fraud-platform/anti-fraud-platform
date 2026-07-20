@@ -95,6 +95,14 @@ CREATE TABLE IF NOT EXISTS dynamic_blacklist (
 
 CREATE INDEX IF NOT EXISTS idx_dynamic_blacklist_ip
     ON dynamic_blacklist(ip);
+
+CREATE TABLE IF NOT EXISTS users (
+    id SERIAL PRIMARY KEY,
+    username VARCHAR(64) UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    role VARCHAR(20) NOT NULL DEFAULT 'viewer',
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
 `
 
 // Apply upgrades the connected database to the schema expected by the

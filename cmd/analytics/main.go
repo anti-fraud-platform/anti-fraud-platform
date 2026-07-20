@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"anti-fraud/internal/auth"
 	"anti-fraud/internal/dbschema"
 	"anti-fraud/internal/observability"
 
@@ -143,7 +144,10 @@ type BlacklistIPsResponse struct {
 
 // ---------- Global Variables ----------
 
-var db *sql.DB
+var (
+	db         *sql.DB
+	requireAuth = false
+)
 
 const maxLimit = 100 // maximum page size to prevent abuse
 
@@ -772,15 +776,47 @@ func main() {
 		},
 	})
 
+	if v, exists := os.LookupEnv("REQUIRE_AUTH"); exists {
+		if b, err := strconv.ParseBool(v); err == nil {
+			requireAuth = b
+		}
+	}
+
+	userStore := auth.NewUserStore(db)
+	authHandlers := auth.NewAuthHandlers(userStore)
+	if requireAuth {
+		authHandlers.SeedAdmin("admin", getEnv("ADMIN_PASSWORD", "admin123"))
+		log.Println("Auth is ENABLED — admin user seeded")
+	} else {
+		log.Println("Auth is DISABLED (REQUIRE_AUTH is not set to true)")
+	}
+
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", observability.MetricsHandler())
 	mux.Handle("/health", observability.Middleware("analytics", "/health", http.HandlerFunc(healthHandler)))
-	mux.Handle("/v1/analytics/stats", observability.Middleware("analytics", "/v1/analytics/stats", http.HandlerFunc(statsHandler)))
-	mux.Handle("/v1/analytics/logs", observability.Middleware("analytics", "/v1/analytics/logs", http.HandlerFunc(logsHandler)))
-	mux.Handle("/v1/analytics/blacklist/summary", observability.Middleware("analytics", "/v1/analytics/blacklist/summary", http.HandlerFunc(blacklistSummaryHandler)))
-	mux.Handle("/v1/analytics/blacklist/ips", observability.Middleware("analytics", "/v1/analytics/blacklist/ips", http.HandlerFunc(blacklistIPsHandler)))
-	mux.Handle("/v1/analytics/trend", observability.Middleware("analytics", "/v1/analytics/trend", http.HandlerFunc(trendHandler)))
-	mux.Handle("/v1/analytics/events", observability.Middleware("analytics", "/v1/analytics/events", http.HandlerFunc(auditEventsHandler)))
+
+	mux.HandleFunc("/v1/auth/register", authHandlers.RegisterHandler)
+	mux.HandleFunc("/v1/auth/login", authHandlers.LoginHandler)
+	mux.Handle("/v1/auth/me", observability.Middleware("analytics", "/v1/auth/me", auth.RequireAuth(http.HandlerFunc(authHandlers.MeHandler))))
+
+	analyticsEndpoints := []struct {
+		path    string
+		handler http.HandlerFunc
+	}{
+		{"/v1/analytics/stats", statsHandler},
+		{"/v1/analytics/logs", logsHandler},
+		{"/v1/analytics/blacklist/summary", blacklistSummaryHandler},
+		{"/v1/analytics/blacklist/ips", blacklistIPsHandler},
+		{"/v1/analytics/trend", trendHandler},
+		{"/v1/analytics/events", auditEventsHandler},
+	}
+	for _, ep := range analyticsEndpoints {
+		var h http.Handler = observability.Middleware("analytics", ep.path, ep.handler)
+		if requireAuth {
+			h = auth.RequireAuth(h)
+		}
+		mux.Handle(ep.path, h)
+	}
 
 	port := getEnv("ANALYTICS_PORT", "8081")
 	log.Printf("Analytics service listening on :%s", port)
