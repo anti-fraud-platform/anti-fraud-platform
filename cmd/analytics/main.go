@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"anti-fraud/internal/auth"
-	"anti-fraud/internal/dbschema"
+	"anti-fraud/internal/migrator"
 	"anti-fraud/internal/observability"
 
 	_ "github.com/lib/pq"
@@ -145,7 +145,7 @@ type BlacklistIPsResponse struct {
 // ---------- Global Variables ----------
 
 var (
-	db         *sql.DB
+	db          *sql.DB
 	requireAuth = false
 )
 
@@ -199,8 +199,8 @@ func statsHandler(w http.ResponseWriter, r *http.Request) {
 		deltaBlocked = float64(blockedCount-prevBlocked) / float64(prevBlocked) * 100
 	}
 
-    // Per‑campaign stats with custom cost per click (from campaigns table, default 5.00)
-    rows, err := db.Query(`
+	// Per‑campaign stats with custom cost per click (from campaigns table, default 5.00)
+	rows, err := db.Query(`
 		SELECT 
 			COALESCE(c.campaign_id, 'unknown') as campaign_id,
 			COALESCE(cam.cost_per_click, 5.00) as cpc,
@@ -211,12 +211,12 @@ func statsHandler(w http.ResponseWriter, r *http.Request) {
 		GROUP BY COALESCE(c.campaign_id, 'unknown'), cam.cost_per_click
 		ORDER BY COALESCE(c.campaign_id, 'unknown')
 	`)
-    if err != nil {
-        log.Printf("Error querying campaign stats: %v", err)
-        http.Error(w, "Internal server error", http.StatusInternalServerError)
-        return
-    }
-    defer rows.Close()
+	if err != nil {
+		log.Printf("Error querying campaign stats: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
 
 	var totalSaved float64
 	campaigns := []CampaignStats{}
@@ -765,9 +765,12 @@ func main() {
 	}
 	log.Println("Connected to PostgreSQL")
 
-	if err = dbschema.Apply(db); err != nil {
-		log.Fatal("Schema migration failed:", err)
+	migrationsDir := getEnv("MIGRATIONS_DIR", "/migrations")
+	mig := migrator.New(db, migrationsDir)
+	if err := mig.Up(); err != nil {
+		log.Fatalf("Failed to apply database migrations: %v", err)
 	}
+	log.Println("Database migrations applied successfully")
 	log.Println("PostgreSQL schema is up to date")
 
 	observability.StartDependencyMonitor(context.Background(), "analytics", 5*time.Second, map[string]observability.ProbeFunc{
