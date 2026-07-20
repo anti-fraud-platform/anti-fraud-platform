@@ -264,6 +264,86 @@ go test ./internal/auth/ -run TestIntegration -count=1 -v
 
 ---
 
+## Frontend Instructions
+
+### Login Page (React)
+
+Create a new route `/login` with a form:
+
+```jsx
+// src/pages/Login.jsx
+const [form, setForm] = useState({ username: '', password: '' })
+const [error, setError] = useState('')
+
+const handleSubmit = async (e) => {
+  e.preventDefault()
+  setError('')
+  try {
+    const res = await fetch('/v1/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(form),
+    })
+    if (!res.ok) {
+      const err = await res.json()
+      throw new Error(err.error || 'Login failed')
+    }
+    const data = await res.json()
+    localStorage.setItem('token', data.token)
+    window.location.href = '/analytics'
+  } catch (err) {
+    setError(err.message)
+  }
+}
+```
+
+### Axios interceptor (attach token to all requests)
+
+```jsx
+// src/api/client.js
+import axios from 'axios'
+
+const client = axios.create({ baseURL: '' })
+
+client.interceptors.request.use((config) => {
+  const token = localStorage.getItem('token')
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`
+  }
+  return config
+})
+
+// Optional: redirect to login on 401
+client.interceptors.response.use(
+  (res) => res,
+  (err) => {
+    if (err.response?.status === 401) {
+      localStorage.removeItem('token')
+      window.location.href = '/login'
+    }
+    return Promise.reject(err)
+  }
+)
+```
+
+### Enabling auth on backend
+
+When the login page is ready, change in `docker-compose.yml`:
+
+```yaml
+REQUIRE_AUTH: "true"
+```
+
+Then redeploy: `docker compose down && docker compose up -d --build`
+
+### What to test manually
+1. Visit `/login`, submit wrong credentials → see error message
+2. Submit correct credentials → redirected to `/analytics` with data loading
+3. Clear `localStorage`, refresh `/analytics` → redirected back to `/login`
+4. Tamper with token in localStorage → 401 → redirected to `/login`
+
+---
+
 ## Conclusion
 
 Added JWT authentication with bcrypt password hashing to the analytics API.
