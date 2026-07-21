@@ -24,14 +24,29 @@ browser_like_headers=(
 AUTH_TOKEN=""
 
 get_admin_token() {
+  local login_response
+  local service target
+
   if [[ -n "$AUTH_TOKEN" ]]; then
     echo "$AUTH_TOKEN"
     return
   fi
-  AUTH_TOKEN=$(curl -s -X POST "$CI_ANALYTICS_URL/v1/auth/login" \
-    -H "Content-Type: application/json" \
-    -d '{"username":"admin","password":"admin123"}' \
-    | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])" 2>/dev/null || true)
+
+  if [[ "$SMOKE_TRANSPORT_MODE" == "compose_exec" ]]; then
+    IFS='|' read -r service target <<<"$(resolve_transport_target "$CI_ANALYTICS_URL/v1/auth/login")"
+    login_response="$(compose_exec_http \
+      "POST" \
+      "$service" \
+      "$target" \
+      '{"username":"admin","password":"admin123"}' \
+      "Content-Type: application/json" 2>/dev/null || true)"
+  else
+    login_response="$(curl -s -X POST "$CI_ANALYTICS_URL/v1/auth/login" \
+      -H "Content-Type: application/json" \
+      -d '{"username":"admin","password":"admin123"}' 2>/dev/null || true)"
+  fi
+
+  AUTH_TOKEN="$(printf '%s' "$login_response" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])" 2>/dev/null || true)"
   echo "$AUTH_TOKEN"
 }
 
@@ -154,6 +169,7 @@ http_post_json() {
     local token
     token="$(get_admin_token)"
     if [[ -n "$token" ]]; then
+      headers+=( "Authorization: Bearer $token" )
       curl_args+=( -H "Authorization: Bearer $token" )
     fi
   fi
