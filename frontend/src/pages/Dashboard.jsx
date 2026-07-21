@@ -119,6 +119,20 @@ function Dashboard() {
               <div className="flex-1 flex flex-col">
                 <SystemHealth />
               </div>
+              
+              <div className="border border-border rounded-lg">
+                <div className="px-4 py-3 border-b border-border flex justify-between">
+                  <h2 className="text-center text-sm font-semibold">
+                    Grafana Dashboard
+                  </h2>
+                  <a
+                    href={window.location.protocol + "//" + window.location.hostname + ":3000"}
+                    className="ml-auto px-3 py-1 rounded border border-border hover:bg-surface transition-colors text-xs text-text-muted cursor-pointer"
+                  >
+                  Open
+                  </a>
+                </div>
+              </div>
             </div>
           </div>
         </>

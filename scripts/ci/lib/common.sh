@@ -6,6 +6,9 @@ readonly COMMON_LIB_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly REPO_ROOT="$(cd -- "$COMMON_LIB_DIR/../../.." && pwd)"
 readonly CI_COMPOSE_FILE="${ANTI_FRAUD_CI_COMPOSE_FILE:-$REPO_ROOT/docker-compose.ci.yml}"
 readonly SMOKE_TRANSPORT_MODE="${SMOKE_TRANSPORT:-host}"
+readonly CI_FRONTEND_URL="${CI_FRONTEND_URL:-http://localhost:13001}"
+readonly CI_ANALYTICS_URL="${CI_ANALYTICS_URL:-http://localhost:18082}"
+readonly CI_NGINX_URL="${CI_NGINX_URL:-http://localhost:19090}"
 
 browser_like_headers=(
   "Content-Type: application/json"
@@ -17,6 +20,35 @@ browser_like_headers=(
   "Sec-Fetch-Mode: cors"
   'Sec-Ch-Ua: "Chromium";v="126", "Not.A/Brand";v="99", "Google Chrome";v="126"'
 )
+
+AUTH_TOKEN=""
+
+get_admin_token() {
+  local login_response
+  local service target
+
+  if [[ -n "$AUTH_TOKEN" ]]; then
+    echo "$AUTH_TOKEN"
+    return
+  fi
+
+  if [[ "$SMOKE_TRANSPORT_MODE" == "compose_exec" ]]; then
+    IFS='|' read -r service target <<<"$(resolve_transport_target "$CI_ANALYTICS_URL/v1/auth/login")"
+    login_response="$(compose_exec_http \
+      "POST" \
+      "$service" \
+      "$target" \
+      '{"username":"admin","password":"admin123"}' \
+      "Content-Type: application/json" 2>/dev/null || true)"
+  else
+    login_response="$(curl -s -X POST "$CI_ANALYTICS_URL/v1/auth/login" \
+      -H "Content-Type: application/json" \
+      -d '{"username":"admin","password":"admin123"}' 2>/dev/null || true)"
+  fi
+
+  AUTH_TOKEN="$(printf '%s' "$login_response" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])" 2>/dev/null || true)"
+  echo "$AUTH_TOKEN"
+}
 
 compose() {
   if docker compose version >/dev/null 2>&1; then
@@ -32,33 +64,33 @@ resolve_transport_target() {
   local base path service internal_url
 
   case "$url" in
-    http://localhost:3001/*)
-      base="http://localhost:3001"
+    "$CI_FRONTEND_URL"/*)
+      base="$CI_FRONTEND_URL"
       service="frontend"
       internal_url="http://127.0.0.1"
       ;;
-    http://localhost:3001)
-      base="http://localhost:3001"
+    "$CI_FRONTEND_URL")
+      base="$CI_FRONTEND_URL"
       service="frontend"
       internal_url="http://127.0.0.1"
       ;;
-    http://localhost:8082/*)
-      base="http://localhost:8082"
+    "$CI_ANALYTICS_URL"/*)
+      base="$CI_ANALYTICS_URL"
       service="analytics"
       internal_url="http://127.0.0.1:8081"
       ;;
-    http://localhost:8082)
-      base="http://localhost:8082"
+    "$CI_ANALYTICS_URL")
+      base="$CI_ANALYTICS_URL"
       service="analytics"
       internal_url="http://127.0.0.1:8081"
       ;;
-    http://localhost:9090/*)
-      base="http://localhost:9090"
+    "$CI_NGINX_URL"/*)
+      base="$CI_NGINX_URL"
       service="nginx_engine"
       internal_url="http://127.0.0.1:9090"
       ;;
-    http://localhost:9090)
-      base="http://localhost:9090"
+    "$CI_NGINX_URL")
+      base="$CI_NGINX_URL"
       service="nginx_engine"
       internal_url="http://127.0.0.1:9090"
       ;;
@@ -103,14 +135,25 @@ compose_exec_http() {
 http_get() {
   local url="$1"
   local service target
+  local -a curl_args=( -fsS )
+  local -a headers=()
+
+  if [[ "$url" == "$CI_ANALYTICS_URL/"* ]]; then
+    local token
+    token="$(get_admin_token)"
+    if [[ -n "$token" ]]; then
+      headers+=( "Authorization: Bearer $token" )
+      curl_args+=( -H "Authorization: Bearer $token" )
+    fi
+  fi
 
   if [[ "$SMOKE_TRANSPORT_MODE" == "compose_exec" ]]; then
     IFS='|' read -r service target <<<"$(resolve_transport_target "$url")"
-    compose_exec_http "GET" "$service" "$target" ""
+    compose_exec_http "GET" "$service" "$target" "" "${headers[@]}"
     return
   fi
 
-  curl -fsS "$url"
+  curl "${curl_args[@]}" "$url"
 }
 
 http_post_json() {
@@ -121,6 +164,15 @@ http_post_json() {
   local service target
   local -a curl_args=( -fsS -X POST )
   local header
+
+  if [[ "$url" == "$CI_ANALYTICS_URL/"* ]]; then
+    local token
+    token="$(get_admin_token)"
+    if [[ -n "$token" ]]; then
+      headers+=( "Authorization: Bearer $token" )
+      curl_args+=( -H "Authorization: Bearer $token" )
+    fi
+  fi
 
   if [[ "$SMOKE_TRANSPORT_MODE" == "compose_exec" ]]; then
     IFS='|' read -r service target <<<"$(resolve_transport_target "$url")"
@@ -216,7 +268,7 @@ wait_for_blocked_challenge_metrics() {
 
   for _ in $(seq 1 "$attempts"); do
     local stats
-    stats="$(http_get http://localhost:8082/v1/analytics/stats)"
+    stats="$(http_get "$CI_ANALYTICS_URL/v1/analytics/stats")"
 
     if python3 - "$stats" <<'PY'
 import json

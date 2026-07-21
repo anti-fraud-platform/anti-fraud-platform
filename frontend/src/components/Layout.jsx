@@ -1,15 +1,34 @@
-import { House, Logs, ShieldBan, Shield, Fingerprint, Search } from 'lucide-react';
-import { NavLink } from 'react-router-dom';
+import { House, Logs, ShieldBan, Shield, Fingerprint, Search, LogOut } from 'lucide-react';
+import { NavLink, useNavigate } from 'react-router-dom';
+import { useState, useEffect } from 'react';
 import { useTheme } from '../hooks/useTheme';
+import { getMe } from '../api/auth';
 
 const navItems = [
-  { to: '/', label: 'Dashboard', icon: <House/> },
-  { to: '/logs', label: 'Logs', icon: <Logs/> },
-  { to: '/blacklist', label: 'Blacklist', icon: <ShieldBan></ShieldBan> },
+  { to: '/analytics', label: 'Dashboard', icon: <House /> },
+  { to: '/logs', label: 'Logs', icon: <Logs /> },
+  { to: '/blacklist', label: 'Blacklist', icon: <ShieldBan /> },
 ];
 
 function Layout({ title, error, children }) {
   const { theme, toggleTheme } = useTheme();
+  const navigate = useNavigate();
+  const [user, setUser] = useState(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    if (!token) return;
+
+    getMe()
+      .then((data) => setUser({ username: data.username, role: data.role }))
+      .catch(() => setUser(null));
+  }, []);
+
+  const handleLogout = () => {
+    localStorage.removeItem('token');
+    navigate('/login', { replace: true });
+  };
 
   return (
     <div className="flex min-h-screen font-sans text-text-main">
@@ -32,7 +51,7 @@ function Layout({ title, error, children }) {
               <NavLink
                 key={item.to}
                 to={item.to}
-                end={item.to === '/'}
+                end={item.to === '/analytics'}
                 className={({ isActive }) =>
                   `flex items-center gap-3 px-4 py-2 rounded-lg text-sm ${
                     isActive
@@ -46,29 +65,55 @@ function Layout({ title, error, children }) {
               </NavLink>
             ))}
           </nav>
-                      
-          <div className="border-t px-3 py-6 border-border flex flex-row items-center gap-1.5 justify-between">
-            <div className="flex flex-row gap-3">
-              <div className="w-8 h-8 bg-primary-light flex rounded-full items-center justify-center text-xs text-primary font-semibold">
-                AD
-              </div>
 
-              <div className="flex flex-col">
-                <div className="text-sm font-semibold">
-                  Admin User
+          <div
+            className="border-t border-border"
+            onMouseEnter={() => setMenuOpen(true)}
+            onMouseLeave={() => setMenuOpen(false)}
+          >
+            <button
+              type="button"
+              className="w-full px-3 py-3 flex flex-row items-center gap-1.5 justify-between hover:bg-surface transition-colors"
+            >
+              <div className="flex flex-row gap-3 items-center">
+                <div className="w-8 h-8 bg-primary-light flex rounded-full items-center justify-center text-xs text-primary font-semibold">
+                  {user ? user.username.slice(0, 2).toUpperCase() : '??'}
                 </div>
-                <div className="text-xs text-text-muted">
-                  admin@antifraud.io
+                <div className="flex flex-col text-left">
+                  <div className="text-sm font-semibold text-text-main">
+                    {user ? user.username : 'Loading...'}
+                  </div>
+                  <div className="text-xs text-text-muted">
+                    {user ? user.role : ''}
+                  </div>
                 </div>
               </div>
+              <svg
+                className={`block flex-shrink-0 ${menuOpen ? 'rotate-180' : ''}`}
+                width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+              >
+                <polyline points="6 9 12 15 18 9" />
+              </svg>
+            </button>
+
+            <div
+              className={`border-t border-border px-3 transition-all duration-200 ${
+                menuOpen
+                  ? 'opacity-100 max-h-20 py-2'
+                  : 'opacity-0 max-h-0 overflow-hidden py-0'
+              }`}
+            >
+              <button
+                onClick={handleLogout}
+                className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-text-main hover:bg-primary-light hover:text-primary transition-colors cursor-pointer"
+              >
+                <LogOut size={16} />
+                Sign out
+              </button>
             </div>
-
-            <svg className="block flex-shrink-0" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="6 9 12 15 18 9" />
-            </svg>
           </div>
 
-          <div className="border-t px-4 py-4 border-border flex flex-col text-xs text-primary text-xs text-text-muted gap-1">
+          <div className="border-t px-4 py-4 border-border flex flex-col text-xs text-primary gap-1">
               <div>@ 2026 AntiFraud</div>
               <div>v1.0.0</div>
           </div>
@@ -113,7 +158,6 @@ function Layout({ title, error, children }) {
             >
               {error ? 'Error' : 'Live'}
             </span>
-
           </div>
         </header>
         <main className="p-6 flex-1">{children}</main>

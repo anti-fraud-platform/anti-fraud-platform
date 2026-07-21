@@ -1,7 +1,61 @@
 import { useState } from 'react';
+import { updateCampaignCost } from '../api/analytics';
 
 function formatUSD(n) {
   return `$${Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function EditableCpc({ campaignId, currentCpc }) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(currentCpc);
+  const [saving, setSaving] = useState(false);
+
+  const handleSave = async () => {
+    const num = parseInt(value, 10);
+    if (isNaN(num) || num <= 0) return;
+    setSaving(true);
+    try {
+      await updateCampaignCost(campaignId, num);
+      setEditing(false);
+    } catch {
+      // revert on error
+      setValue(currentCpc);
+      setEditing(false);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter') handleSave();
+    if (e.key === 'Escape') { setValue(currentCpc); setEditing(false); }
+  };
+
+  if (editing) {
+    return (
+      <input
+        type="number"
+        min="1"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onBlur={handleSave}
+        onKeyDown={handleKeyDown}
+        autoFocus
+        className="w-16 text-right bg-surface border border-border rounded px-1 py-0.5 text-xs font-mono"
+      />
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => setEditing(true)}
+      className="text-right text-text-muted hover:text-primary transition-colors cursor-pointer"
+      title="Click to edit cost per click"
+    >
+      {saving ? '...' : formatUSD(value)}
+    </button>
+  );
 }
 
 // avgCpc is derived (saved_money_usd / blocked_bots) rather than read from a
@@ -50,7 +104,9 @@ function CampaignCostBreakdown({ campaigns }) {
                   <td className="px-4 py-2.5 text-right text-text-main font-medium">
                     {r.blocked.toLocaleString('en-US')}
                   </td>
-                  <td className="px-4 py-2.5 text-right text-text-muted">{formatUSD(r.avgCpc)}</td>
+                  <td className="px-4 py-2.5 text-right">
+                    <EditableCpc campaignId={r.id} currentCpc={r.avgCpc} />
+                  </td>
                   <td className="px-4 py-2.5 text-right text-success font-semibold">{formatUSD(r.saved)}</td>
                 </tr>
               ))}

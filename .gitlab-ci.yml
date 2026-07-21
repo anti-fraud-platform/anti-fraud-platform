@@ -8,15 +8,26 @@ backend:
   stage: test
   image: golang:1.26-alpine
   services:
+    - alias: postgres
+      name: postgres:15
     - alias: redis
       name: redis:7-alpine
   variables:
+    POSTGRES_USER: "antifraud"
+    POSTGRES_PASSWORD: "antifraud123"
+    POSTGRES_DB: "analytics"
+    DB_HOST: "postgres"
+    DB_PORT: "5432"
+    DB_USER: "antifraud"
+    DB_PASSWORD: "antifraud123"
+    DB_NAME: "analytics"
     TEST_REDIS_ADDR: "redis:6379"
   before_script:
     - apk add --no-cache git
   script:
     - go mod tidy
     - git diff --exit-code -- go.mod go.sum
+    - go run ./cmd/migrate up
     - go test ./...
     - go vet ./...
 
@@ -116,7 +127,7 @@ deploy_vm:
       git checkout main &&
       git pull --ff-only origin main &&
       export COMPOSE_PROFILES=monitoring &&
-      docker compose up --build -d &&
+      docker compose up --build -d --remove-orphans &&
       docker compose restart nginx_engine &&
       docker compose ps &&
       bash scripts/deploy/vm_smoke.sh"
