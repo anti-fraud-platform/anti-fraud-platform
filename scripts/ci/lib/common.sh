@@ -6,6 +6,9 @@ readonly COMMON_LIB_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly REPO_ROOT="$(cd -- "$COMMON_LIB_DIR/../../.." && pwd)"
 readonly CI_COMPOSE_FILE="${ANTI_FRAUD_CI_COMPOSE_FILE:-$REPO_ROOT/docker-compose.ci.yml}"
 readonly SMOKE_TRANSPORT_MODE="${SMOKE_TRANSPORT:-host}"
+readonly CI_FRONTEND_URL="${CI_FRONTEND_URL:-http://localhost:13001}"
+readonly CI_ANALYTICS_URL="${CI_ANALYTICS_URL:-http://localhost:18082}"
+readonly CI_NGINX_URL="${CI_NGINX_URL:-http://localhost:19090}"
 
 browser_like_headers=(
   "Content-Type: application/json"
@@ -25,7 +28,7 @@ get_admin_token() {
     echo "$AUTH_TOKEN"
     return
   fi
-  AUTH_TOKEN=$(curl -s -X POST http://localhost:8082/v1/auth/login \
+  AUTH_TOKEN=$(curl -s -X POST "$CI_ANALYTICS_URL/v1/auth/login" \
     -H "Content-Type: application/json" \
     -d '{"username":"admin","password":"admin123"}' \
     | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])" 2>/dev/null || true)
@@ -46,33 +49,33 @@ resolve_transport_target() {
   local base path service internal_url
 
   case "$url" in
-    http://localhost:3001/*)
-      base="http://localhost:3001"
+    "$CI_FRONTEND_URL"/*)
+      base="$CI_FRONTEND_URL"
       service="frontend"
       internal_url="http://127.0.0.1"
       ;;
-    http://localhost:3001)
-      base="http://localhost:3001"
+    "$CI_FRONTEND_URL")
+      base="$CI_FRONTEND_URL"
       service="frontend"
       internal_url="http://127.0.0.1"
       ;;
-    http://localhost:8082/*)
-      base="http://localhost:8082"
+    "$CI_ANALYTICS_URL"/*)
+      base="$CI_ANALYTICS_URL"
       service="analytics"
       internal_url="http://127.0.0.1:8081"
       ;;
-    http://localhost:8082)
-      base="http://localhost:8082"
+    "$CI_ANALYTICS_URL")
+      base="$CI_ANALYTICS_URL"
       service="analytics"
       internal_url="http://127.0.0.1:8081"
       ;;
-    http://localhost:9090/*)
-      base="http://localhost:9090"
+    "$CI_NGINX_URL"/*)
+      base="$CI_NGINX_URL"
       service="nginx_engine"
       internal_url="http://127.0.0.1:9090"
       ;;
-    http://localhost:9090)
-      base="http://localhost:9090"
+    "$CI_NGINX_URL")
+      base="$CI_NGINX_URL"
       service="nginx_engine"
       internal_url="http://127.0.0.1:9090"
       ;;
@@ -119,7 +122,7 @@ http_get() {
   local service target
   local -a curl_args=( -fsS )
 
-  if [[ "$url" == *":8082/"* ]]; then
+  if [[ "$url" == "$CI_ANALYTICS_URL/"* ]]; then
     local token
     token="$(get_admin_token)"
     if [[ -n "$token" ]]; then
@@ -145,7 +148,7 @@ http_post_json() {
   local -a curl_args=( -fsS -X POST )
   local header
 
-  if [[ "$url" == *":8082/"* ]]; then
+  if [[ "$url" == "$CI_ANALYTICS_URL/"* ]]; then
     local token
     token="$(get_admin_token)"
     if [[ -n "$token" ]]; then
@@ -247,7 +250,7 @@ wait_for_blocked_challenge_metrics() {
 
   for _ in $(seq 1 "$attempts"); do
     local stats
-    stats="$(http_get http://localhost:8082/v1/analytics/stats)"
+    stats="$(http_get "$CI_ANALYTICS_URL/v1/analytics/stats")"
 
     if python3 - "$stats" <<'PY'
 import json

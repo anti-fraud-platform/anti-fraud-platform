@@ -116,7 +116,7 @@ deploy_vm:
       git checkout main &&
       git pull --ff-only origin main &&
       export COMPOSE_PROFILES=monitoring &&
-      docker compose up --build -d &&
+      docker compose up --build -d --remove-orphans &&
       docker compose restart nginx_engine &&
       docker compose ps &&
       bash scripts/deploy/vm_smoke.sh"
