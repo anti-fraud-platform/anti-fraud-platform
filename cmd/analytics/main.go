@@ -733,6 +733,61 @@ func blacklistIPsHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ---------- Campaign Cost Update ----------
+
+type updateCampaignRequest struct {
+	CampaignID   string `json:"campaign_id"`
+	CostPerClick int64  `json:"cost_per_click"`
+}
+
+func updateCampaignHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "PUT, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	if r.Method != "PUT" {
+		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req updateCampaignRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid JSON body"}`, http.StatusBadRequest)
+		return
+	}
+
+	if req.CampaignID == "" {
+		http.Error(w, `{"error":"campaign_id is required"}`, http.StatusBadRequest)
+		return
+	}
+	if req.CostPerClick <= 0 {
+		http.Error(w, `{"error":"cost_per_click must be positive"}`, http.StatusBadRequest)
+		return
+	}
+
+	_, err := db.Exec(`
+		INSERT INTO campaigns (campaign_id, name, cost_per_click)
+		VALUES ($1, '', $2)
+		ON CONFLICT (campaign_id) DO UPDATE SET cost_per_click = $2
+	`, req.CampaignID, req.CostPerClick)
+	if err != nil {
+		log.Printf("Error updating campaign cost: %v", err)
+		http.Error(w, `{"error":"internal server error"}`, http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"campaign_id":    req.CampaignID,
+		"cost_per_click": req.CostPerClick,
+	})
+}
+
 // ---------- Helper Functions ----------
 
 // getEnv retrieves an environment variable or returns a fallback value.
@@ -812,6 +867,7 @@ func main() {
 		{"/v1/analytics/blacklist/ips", blacklistIPsHandler},
 		{"/v1/analytics/trend", trendHandler},
 		{"/v1/analytics/events", auditEventsHandler},
+		{"/v1/analytics/campaigns", updateCampaignHandler},
 	}
 	for _, ep := range analyticsEndpoints {
 		var h http.Handler = observability.Middleware("analytics", ep.path, ep.handler)

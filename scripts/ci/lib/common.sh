@@ -18,6 +18,20 @@ browser_like_headers=(
   'Sec-Ch-Ua: "Chromium";v="126", "Not.A/Brand";v="99", "Google Chrome";v="126"'
 )
 
+AUTH_TOKEN=""
+
+get_admin_token() {
+  if [[ -n "$AUTH_TOKEN" ]]; then
+    echo "$AUTH_TOKEN"
+    return
+  fi
+  AUTH_TOKEN=$(curl -s -X POST http://localhost:8082/v1/auth/login \
+    -H "Content-Type: application/json" \
+    -d '{"username":"admin","password":"admin123"}' \
+    | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])" 2>/dev/null || true)
+  echo "$AUTH_TOKEN"
+}
+
 compose() {
   if docker compose version >/dev/null 2>&1; then
     docker compose -f "$CI_COMPOSE_FILE" "$@"
@@ -103,6 +117,15 @@ compose_exec_http() {
 http_get() {
   local url="$1"
   local service target
+  local -a curl_args=( -fsS )
+
+  if [[ "$url" == *":8082/"* ]]; then
+    local token
+    token="$(get_admin_token)"
+    if [[ -n "$token" ]]; then
+      curl_args+=( -H "Authorization: Bearer $token" )
+    fi
+  fi
 
   if [[ "$SMOKE_TRANSPORT_MODE" == "compose_exec" ]]; then
     IFS='|' read -r service target <<<"$(resolve_transport_target "$url")"
@@ -110,7 +133,7 @@ http_get() {
     return
   fi
 
-  curl -fsS "$url"
+  curl "${curl_args[@]}" "$url"
 }
 
 http_post_json() {
@@ -121,6 +144,14 @@ http_post_json() {
   local service target
   local -a curl_args=( -fsS -X POST )
   local header
+
+  if [[ "$url" == *":8082/"* ]]; then
+    local token
+    token="$(get_admin_token)"
+    if [[ -n "$token" ]]; then
+      curl_args+=( -H "Authorization: Bearer $token" )
+    fi
+  fi
 
   if [[ "$SMOKE_TRANSPORT_MODE" == "compose_exec" ]]; then
     IFS='|' read -r service target <<<"$(resolve_transport_target "$url")"

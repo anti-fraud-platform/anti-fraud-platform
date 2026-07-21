@@ -42,3 +42,14 @@ export async function fetchBlacklistIps() {
   const response = await client.get('/v1/analytics/blacklist/ips')
   return response.data
 }
+
+// PUT /v1/analytics/campaigns
+// Body: { campaign_id, cost_per_click }
+// Backend returns: { campaign_id, cost_per_click }
+export async function updateCampaignCost(campaignId, costPerClick) {
+  const response = await client.put('/v1/analytics/campaigns', {
+    campaign_id: campaignId,
+    cost_per_click: costPerClick,
+  })
+  return response.data
+}
