@@ -8,9 +8,19 @@ backend:
   stage: test
   image: golang:1.26-alpine
   services:
+    - alias: postgres
+      name: postgres:15
     - alias: redis
       name: redis:7-alpine
   variables:
+    POSTGRES_USER: "antifraud"
+    POSTGRES_PASSWORD: "antifraud123"
+    POSTGRES_DB: "analytics"
+    DB_HOST: "postgres"
+    DB_PORT: "5432"
+    DB_USER: "antifraud"
+    DB_PASSWORD: "antifraud123"
+    DB_NAME: "analytics"
     TEST_REDIS_ADDR: "redis:6379"
   before_script:
     - apk add --no-cache git

@@ -16,8 +16,14 @@ import (
 )
 
 func setupTestDB(t *testing.T) {
+	t.Helper()
+
 	if db != nil {
-		return
+		if err := db.Ping(); err == nil {
+			return
+		}
+		_ = db.Close()
+		db = nil
 	}
 
 	dbHost := os.Getenv("DB_HOST")
@@ -44,16 +50,18 @@ func setupTestDB(t *testing.T) {
 	connStr := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
 		dbHost, dbPort, dbUser, dbPassword, dbName)
 
-	var err error
-	db, err = sql.Open("postgres", connStr)
+	testDB, err := sql.Open("postgres", connStr)
 	if err != nil {
 		t.Skipf("Skipping test: database not available (%v)", err)
 		return
 	}
-	if err = db.Ping(); err != nil {
+	if err = testDB.Ping(); err != nil {
+		_ = testDB.Close()
 		t.Skipf("Skipping test: database not reachable (%v)", err)
 		return
 	}
+
+	db = testDB
 }
 
 func TestBlacklistEndpointNotEmpty(t *testing.T) {
