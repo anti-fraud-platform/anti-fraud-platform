@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import Layout from '../components/Layout';
 import SkeletonBlacklistRow from '../components/SkeletonBlacklistRow';
+import { fetchBlacklistIps } from '../api/analytics';
+
 const intervalMs = 5000;
 
 const SOURCE_LABELS = {
@@ -38,9 +40,7 @@ function Blacklist() {
       setLoading(true);
 
       try {
-        const response = await fetch('/api/v1/analytics/blacklist/ips');
-        if (!response.ok) throw new Error('Failed to fetch');
-        const data = await response.json();
+        const data = await fetchBlacklistIps();
         if (cancelled) return;
         setBlacklistData(data.items || []);
         setError(null);
