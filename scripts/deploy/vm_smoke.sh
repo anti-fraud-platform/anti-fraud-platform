@@ -8,7 +8,7 @@ source "$SCRIPT_DIR/lib/common.sh"
 echo "Smoke: waiting for engine challenge endpoint"
 wait_for_url "http://localhost:9090/v1/challenge" 40 2
 echo "Smoke: waiting for analytics auth endpoint"
-wait_for_url "$DEPLOY_ANALYTICS_URL/v1/auth/login" 40 2
+wait_for_admin_login 40 2
 echo "Smoke: waiting for Prometheus readiness"
 wait_for_url "http://localhost:9091/-/ready" 40 2
 echo "Smoke: waiting for Grafana health endpoint"
