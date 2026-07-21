@@ -1,12 +1,7 @@
-import axios from 'axios'
-
-// Base client. Requests go through /api -> Vite proxy forwards to the analytics backend (port 8081).
-const client = axios.create({
-  baseURL: '/api',
-  timeout: 5000,
-})
+import client from './client'
 
 // GET /v1/analytics/stats
+// Header: Authorization: Bearer eyJhbGci...
 // Backend returns:
 //   total_clicks    - total number of clicks
 //   allowed_count   - clicks that were not blocked
@@ -22,6 +17,7 @@ export async function fetchAnalyticsStats() {
 }
 
 // GET /v1/analytics/logs
+// Header: Authorization: Bearer eyJhbGci...
 // Query params: page, limit, campaign_id, is_bot, reason
 // Backend returns: { data: [...ClickLogEntry], total, page, limit, total_pages }
 // ClickLogEntry: id, ip, campaign_id, user_agent, is_bot, reason, processed_at, country, city.
@@ -32,6 +28,7 @@ export async function fetchAnalyticsLogs(params = {}) {
 }
 
 // GET /v1/analytics/trend
+// Header: Authorization: Bearer eyJhbGci...
 // Backend returns: { data: [{ date, total_clicks, allowed_count, blocked_count, breakdown }] }
 export async function fetchAnalyticsTrend() {
   const response = await client.get('/v1/analytics/trend')
