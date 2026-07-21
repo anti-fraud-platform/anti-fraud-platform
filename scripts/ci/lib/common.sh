@@ -121,18 +121,20 @@ http_get() {
   local url="$1"
   local service target
   local -a curl_args=( -fsS )
+  local -a headers=()
 
   if [[ "$url" == "$CI_ANALYTICS_URL/"* ]]; then
     local token
     token="$(get_admin_token)"
     if [[ -n "$token" ]]; then
+      headers+=( "Authorization: Bearer $token" )
       curl_args+=( -H "Authorization: Bearer $token" )
     fi
   fi
 
   if [[ "$SMOKE_TRANSPORT_MODE" == "compose_exec" ]]; then
     IFS='|' read -r service target <<<"$(resolve_transport_target "$url")"
-    compose_exec_http "GET" "$service" "$target" ""
+    compose_exec_http "GET" "$service" "$target" "" "${headers[@]}"
     return
   fi
 
