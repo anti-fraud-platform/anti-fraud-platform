@@ -14,11 +14,11 @@ import (
 	"time"
 
 	"anti-fraud/internal/challenge"
-	"anti-fraud/internal/dbschema"
 	"anti-fraud/internal/geoiputil"
 	"anti-fraud/internal/geopolicy"
 	"anti-fraud/internal/headercheck"
 	"anti-fraud/internal/logger"
+	"anti-fraud/internal/migrator"
 	"anti-fraud/internal/observability"
 
 	_ "github.com/lib/pq"
@@ -131,9 +131,12 @@ func main() {
 	}
 	log.Println("Successfully connected to PostgreSQL storage")
 
-	if err := dbschema.Apply(db); err != nil {
-		log.Fatalf("Failed to apply PostgreSQL schema: %v", err)
+	migrationsDir := getEnv("MIGRATIONS_DIR", "/migrations")
+	mig := migrator.New(db, migrationsDir)
+	if err := mig.Up(); err != nil {
+		log.Fatalf("Failed to apply database migrations: %v", err)
 	}
+	log.Println("Database migrations applied successfully")
 	log.Println("PostgreSQL schema is up to date")
 
 	var errs []error

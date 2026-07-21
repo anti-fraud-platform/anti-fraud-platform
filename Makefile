@@ -35,7 +35,9 @@
 	ci-check-nginx-reresolve \
 	ci-check-frontend-reresolve \
 	loadtest-k6-ramp \
-	loadtest-k6-mix
+	loadtest-k6-mix \
+	migrate-up \
+	migrate-status
 
 fmt:
 	gofmt -w $$(find . -name '*.go' -not -path './vendor/*')
@@ -146,3 +148,9 @@ loadtest-k6-ramp:
 
 loadtest-k6-mix:
 	bash scripts/loadtest/run_k6.sh k6_status_mix.js
+
+migrate-up:
+	DB_HOST=127.0.0.1 DB_PORT=5433 go run cmd/migrate/main.go up
+
+migrate-status:
+	DB_HOST=127.0.0.1 DB_PORT=5433 go run cmd/migrate/main.go status

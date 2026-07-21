@@ -7,9 +7,7 @@ RUN apk add --no-cache ca-certificates && update-ca-certificates
 COPY go.* ./
 RUN go mod download
 
-# Если есть общие пакеты — копируем их
 COPY internal ./internal
-
 COPY cmd ./cmd
 
 RUN CGO_ENABLED=0 GOOS=linux go build -o /bin/analytics ./cmd/analytics
@@ -17,7 +15,13 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o /bin/analytics ./cmd/analytics
 FROM alpine:3.21
 
 RUN adduser -D -H appuser
+
 COPY --from=builder /bin/analytics /usr/local/bin/analytics
+
+COPY migrations /migrations
+RUN chown -R appuser:appuser /migrations
+
+
 USER appuser
 
 EXPOSE 8081
