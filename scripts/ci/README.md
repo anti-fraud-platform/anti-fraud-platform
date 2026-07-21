@@ -30,11 +30,22 @@ If you want only one check, run one of these:
 
 Low-level entry point: `scripts/ci/compose_smoke.sh`
 
+Default local CI host ports:
+
+- frontend: `13001`
+- analytics: `18082`
+- nginx simulator: `19090`
+- postgres: `15433`
+- redis: `16380`
+
+This keeps the CI compose stack separate from the main local stack, which still
+uses `3001`, `8082`, `9090`, `5433`, and `6380`.
+
 Layout:
 
 - `checks/01_wait_for_stack.sh` waits for frontend, analytics, and nginx to answer.
-- `checks/02_frontend_shell.sh` verifies the React shell is served on `:3001`.
-- `checks/03_simulator_page.sh` verifies the click simulator page is served on `:9090`.
+- `checks/02_frontend_shell.sh` verifies the React shell is served on the CI frontend port.
+- `checks/03_simulator_page.sh` verifies the click simulator page is served on the CI nginx port.
 - `checks/04_analytics_contract.sh` checks that analytics returns the required response fields.
 - `checks/05_challenge_flow.sh` checks `/v1/challenge` and proves an unsolved click is flagged.
 - `checks/06_nginx_reresolve.sh` recreates only the `engine` container and checks that nginx still reaches it.

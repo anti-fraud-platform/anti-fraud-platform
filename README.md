@@ -478,30 +478,42 @@ Last 20 audit events. Requires rows in the `audit_events` table.
 
 ## CI
 
-GitHub Actions runs on every push to main and every pull request targeting main.
+GitHub Actions runs on every push to `main` and every pull request targeting `main`.
 
-The workflow now has four separate jobs:
+The workflow now has five jobs:
 
 ```bash
 backend:
-  go build ./...
-  go test $(go list ./... | grep -v frontend) -race -count=1
+  go mod tidy
+  git diff --exit-code -- go.mod go.sum
+  go run ./cmd/migrate up
+  go test ./...
+  go vet ./...
+
+compose-config:
+  docker compose config
+  docker compose --profile monitoring config
+  docker compose -f docker-compose.ci.yml config
 
 frontend:
   npm ci
   npm run lint
   npm run build
 
-govulncheck:
-  govulncheck ./...
+docker-build:
+  docker build -f Dockerfile.engine -t antifraud-engine:ci .
+  docker build -f Dockerfile.analytics -t antifraud-analytics:ci .
+  docker build -f Dockerfile.nginx-engine -t antifraud-nginx-engine:ci .
+  docker build -f frontend/Dockerfile -t antifraud-frontend:ci .
 
 integration:
-  docker compose config
   docker compose up --build -d
   bash scripts/ci/compose_smoke.sh
 ```
 
 The frontend build is uploaded as a `frontend-dist` artifact instead of being discarded at the end of the job.
+
+The backend job now uses real PostgreSQL and Redis service containers, applies migrations before tests, and verifies that `go.mod` / `go.sum` stay clean after `go mod tidy`.
 
 The integration stage boots the real production-like stack and checks the behavior that mattered in review:
 
@@ -511,6 +523,8 @@ The integration stage boots the real production-like stack and checks the behavi
 - a click without a solved challenge comes back as `flagged`
 - analytics returns the new fields such as `reason_breakdown`, `js_challenge_blocked`, and `header_heuristic_blocked`
 - nginx still reaches the engine after recreating only the `engine` container, which catches the stale-upstream bug we hit earlier
+
+On failure, the workflow uploads compose diagnostics so the broken stack can be inspected without rerunning locally.
 
 See [.github/workflows/ci.yml](.github/workflows/ci.yml), [scripts/ci/compose_smoke.sh](scripts/ci/compose_smoke.sh), and [scripts/ci/README.md](scripts/ci/README.md).
 

@@ -11,6 +11,19 @@ jobs:
   backend:
     runs-on: ubuntu-latest
     services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: antifraud
+          POSTGRES_PASSWORD: antifraud123
+          POSTGRES_DB: analytics
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U antifraud -d analytics"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
       redis:
         image: redis:7-alpine
         ports:
@@ -21,6 +34,14 @@ jobs:
           --health-timeout 3s
           --health-retries 5
     env:
+      POSTGRES_USER: antifraud
+      POSTGRES_PASSWORD: antifraud123
+      POSTGRES_DB: analytics
+      DB_HOST: "127.0.0.1"
+      DB_PORT: "5432"
+      DB_USER: "antifraud"
+      DB_PASSWORD: "antifraud123"
+      DB_NAME: "analytics"
       TEST_REDIS_ADDR: "localhost:6379"
     steps:
       - name: Check out repository
@@ -30,8 +51,28 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: Build Go packages
-        run: make ci-backend
+      - name: Verify Go module files stay clean
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+      - name: Apply database migrations
+        run: go run ./cmd/migrate up
+      - name: Run backend test suite
+        run: go test ./...
+      - name: Run go vet
+        run: go vet ./...
+
+  compose-config:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Validate base compose file
+        run: docker compose config > /tmp/compose-base.yaml
+      - name: Validate monitoring compose profile
+        run: docker compose --profile monitoring config > /tmp/compose-monitoring.yaml
+      - name: Validate CI compose file
+        run: docker compose -f docker-compose.ci.yml config > /tmp/compose-ci.yaml
 
   frontend:
     runs-on: ubuntu-latest
@@ -54,25 +95,33 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  govulncheck:
+  docker-build:
     runs-on: ubuntu-latest
+    needs:
+      - backend
+      - frontend
+      - compose-config
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-      - name: Run govulncheck
-        run: make ci-govulncheck
+      - name: Build engine image
+        run: docker build -f Dockerfile.engine -t antifraud-engine:ci .
+      - name: Build analytics image
+        run: docker build -f Dockerfile.analytics -t antifraud-analytics:ci .
+      - name: Build nginx engine image
+        run: docker build -f Dockerfile.nginx-engine -t antifraud-nginx-engine:ci .
+      - name: Build frontend image
+        run: docker build -f frontend/Dockerfile -t antifraud-frontend:ci .
 
   integration:
     runs-on: ubuntu-latest
     needs:
       - backend
       - frontend
-      - govulncheck
+      - compose-config
+      - docker-build
+    env:
+      SMOKE_TRANSPORT: compose_exec
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -83,14 +132,16 @@ jobs:
       - name: Dump compose state on failure
         if: failure()
         run: |
-          docker compose ps
-          docker compose logs --no-color > compose-logs.txt
-      - name: Upload compose logs on failure
+          docker compose -f docker-compose.ci.yml ps > compose-ps.txt
+          docker compose -f docker-compose.ci.yml logs --no-color > compose-logs.txt
+      - name: Upload compose diagnostics on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: compose-logs
-          path: compose-logs.txt
+          name: compose-diagnostics
+          path: |
+            compose-ps.txt
+            compose-logs.txt
           if-no-files-found: ignore
           retention-days: 7
       - name: Tear down stack
