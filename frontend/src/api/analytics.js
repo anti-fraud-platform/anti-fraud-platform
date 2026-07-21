@@ -34,3 +34,11 @@ export async function fetchAnalyticsTrend() {
   const response = await client.get('/v1/analytics/trend')
   return response.data
 }
+
+// GET /v1/analytics/blacklist/ips
+// Header: Authorization: Bearer eyJhbGci...
+// Backend returns: { items: [{ ip, source, block_count, first_blocked, last_blocked }] }
+export async function fetchBlacklistIps() {
+  const response = await client.get('/v1/analytics/blacklist/ips')
+  return response.data
+}
