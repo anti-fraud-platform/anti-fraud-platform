@@ -27,6 +27,7 @@ backend:
   script:
     - go mod tidy
     - git diff --exit-code -- go.mod go.sum
+    - go run ./cmd/migrate up
     - go test ./...
     - go vet ./...
 
