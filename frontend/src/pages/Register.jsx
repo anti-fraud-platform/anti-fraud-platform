@@ -38,7 +38,6 @@ function Register() {
       const message =
         err.response?.data?.error || 'Registration failed. Please try again.'
       setError(message)
-    } finally {
       setLoading(false)
     }
   }
