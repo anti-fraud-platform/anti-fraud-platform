@@ -12,7 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"anti-fraud/internal/dbschema"
+	"anti-fraud/internal/auth"
+	"anti-fraud/internal/migrator"
 	"anti-fraud/internal/observability"
 
 	_ "github.com/lib/pq"
@@ -143,7 +144,10 @@ type BlacklistIPsResponse struct {
 
 // ---------- Global Variables ----------
 
-var db *sql.DB
+var (
+	db          *sql.DB
+	requireAuth = false
+)
 
 const maxLimit = 100 // maximum page size to prevent abuse
 
@@ -195,8 +199,8 @@ func statsHandler(w http.ResponseWriter, r *http.Request) {
 		deltaBlocked = float64(blockedCount-prevBlocked) / float64(prevBlocked) * 100
 	}
 
-    // Per‑campaign stats with custom cost per click (from campaigns table, default 5.00)
-    rows, err := db.Query(`
+	// Per‑campaign stats with custom cost per click (from campaigns table, default 5.00)
+	rows, err := db.Query(`
 		SELECT 
 			COALESCE(c.campaign_id, 'unknown') as campaign_id,
 			COALESCE(cam.cost_per_click, 5.00) as cpc,
@@ -207,12 +211,12 @@ func statsHandler(w http.ResponseWriter, r *http.Request) {
 		GROUP BY COALESCE(c.campaign_id, 'unknown'), cam.cost_per_click
 		ORDER BY COALESCE(c.campaign_id, 'unknown')
 	`)
-    if err != nil {
-        log.Printf("Error querying campaign stats: %v", err)
-        http.Error(w, "Internal server error", http.StatusInternalServerError)
-        return
-    }
-    defer rows.Close()
+	if err != nil {
+		log.Printf("Error querying campaign stats: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
 
 	var totalSaved float64
 	campaigns := []CampaignStats{}
@@ -729,6 +733,61 @@ func blacklistIPsHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ---------- Campaign Cost Update ----------
+
+type updateCampaignRequest struct {
+	CampaignID   string `json:"campaign_id"`
+	CostPerClick int64  `json:"cost_per_click"`
+}
+
+func updateCampaignHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "PUT, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	if r.Method != "PUT" {
+		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req updateCampaignRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid JSON body"}`, http.StatusBadRequest)
+		return
+	}
+
+	if req.CampaignID == "" {
+		http.Error(w, `{"error":"campaign_id is required"}`, http.StatusBadRequest)
+		return
+	}
+	if req.CostPerClick <= 0 {
+		http.Error(w, `{"error":"cost_per_click must be positive"}`, http.StatusBadRequest)
+		return
+	}
+
+	_, err := db.Exec(`
+		INSERT INTO campaigns (campaign_id, name, cost_per_click)
+		VALUES ($1, '', $2)
+		ON CONFLICT (campaign_id) DO UPDATE SET cost_per_click = $2
+	`, req.CampaignID, req.CostPerClick)
+	if err != nil {
+		log.Printf("Error updating campaign cost: %v", err)
+		http.Error(w, `{"error":"internal server error"}`, http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"campaign_id":    req.CampaignID,
+		"cost_per_click": req.CostPerClick,
+	})
+}
+
 // ---------- Helper Functions ----------
 
 // getEnv retrieves an environment variable or returns a fallback value.
@@ -761,9 +820,12 @@ func main() {
 	}
 	log.Println("Connected to PostgreSQL")
 
-	if err = dbschema.Apply(db); err != nil {
-		log.Fatal("Schema migration failed:", err)
+	migrationsDir := getEnv("MIGRATIONS_DIR", "/migrations")
+	mig := migrator.New(db, migrationsDir)
+	if err := mig.Up(); err != nil {
+		log.Fatalf("Failed to apply database migrations: %v", err)
 	}
+	log.Println("Database migrations applied successfully")
 	log.Println("PostgreSQL schema is up to date")
 
 	observability.StartDependencyMonitor(context.Background(), "analytics", 5*time.Second, map[string]observability.ProbeFunc{
@@ -772,15 +834,48 @@ func main() {
 		},
 	})
 
+	if v, exists := os.LookupEnv("REQUIRE_AUTH"); exists {
+		if b, err := strconv.ParseBool(v); err == nil {
+			requireAuth = b
+		}
+	}
+
+	userStore := auth.NewUserStore(db)
+	authHandlers := auth.NewAuthHandlers(userStore)
+	if requireAuth {
+		authHandlers.SeedAdmin("admin", getEnv("ADMIN_PASSWORD", "admin123"))
+		log.Println("Auth is ENABLED — admin user seeded")
+	} else {
+		log.Println("Auth is DISABLED (REQUIRE_AUTH is not set to true)")
+	}
+
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", observability.MetricsHandler())
 	mux.Handle("/health", observability.Middleware("analytics", "/health", http.HandlerFunc(healthHandler)))
-	mux.Handle("/v1/analytics/stats", observability.Middleware("analytics", "/v1/analytics/stats", http.HandlerFunc(statsHandler)))
-	mux.Handle("/v1/analytics/logs", observability.Middleware("analytics", "/v1/analytics/logs", http.HandlerFunc(logsHandler)))
-	mux.Handle("/v1/analytics/blacklist/summary", observability.Middleware("analytics", "/v1/analytics/blacklist/summary", http.HandlerFunc(blacklistSummaryHandler)))
-	mux.Handle("/v1/analytics/blacklist/ips", observability.Middleware("analytics", "/v1/analytics/blacklist/ips", http.HandlerFunc(blacklistIPsHandler)))
-	mux.Handle("/v1/analytics/trend", observability.Middleware("analytics", "/v1/analytics/trend", http.HandlerFunc(trendHandler)))
-	mux.Handle("/v1/analytics/events", observability.Middleware("analytics", "/v1/analytics/events", http.HandlerFunc(auditEventsHandler)))
+
+	mux.HandleFunc("/v1/auth/register", authHandlers.RegisterHandler)
+	mux.HandleFunc("/v1/auth/login", authHandlers.LoginHandler)
+	mux.Handle("/v1/auth/me", observability.Middleware("analytics", "/v1/auth/me", auth.RequireAuth(http.HandlerFunc(authHandlers.MeHandler))))
+
+	analyticsEndpoints := []struct {
+		path    string
+		handler http.HandlerFunc
+	}{
+		{"/v1/analytics/stats", statsHandler},
+		{"/v1/analytics/logs", logsHandler},
+		{"/v1/analytics/blacklist/summary", blacklistSummaryHandler},
+		{"/v1/analytics/blacklist/ips", blacklistIPsHandler},
+		{"/v1/analytics/trend", trendHandler},
+		{"/v1/analytics/events", auditEventsHandler},
+		{"/v1/analytics/campaigns", updateCampaignHandler},
+	}
+	for _, ep := range analyticsEndpoints {
+		var h http.Handler = observability.Middleware("analytics", ep.path, ep.handler)
+		if requireAuth {
+			h = auth.RequireAuth(h)
+		}
+		mux.Handle(ep.path, h)
+	}
 
 	port := getEnv("ANALYTICS_PORT", "8081")
 	log.Printf("Analytics service listening on :%s", port)

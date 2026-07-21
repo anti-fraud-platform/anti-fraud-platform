@@ -48,7 +48,7 @@ services:
       ENGINE_UPSTREAM: engine:8080
       UPSTREAM_RESOLVER: 127.0.0.11
     ports:
-      - "9090:9090"
+      - "19090:9090"
     depends_on:
       - engine
     networks:
@@ -71,8 +71,11 @@ services:
       DB_MAX_IDLE_CONNS: "10"
       REDIS_HOST: redis
       REDIS_PORT: "6379"
+      REQUIRE_AUTH: "true"
+      JWT_SECRET: "change-me-in-production-ci"
+      ADMIN_PASSWORD: "admin123"
     ports:
-      - "8082:8081"
+      - "18082:8081"
     depends_on:
       postgres:
         condition: service_healthy
@@ -92,7 +95,7 @@ services:
       ANALYTICS_UPSTREAM: analytics:8081
       ENGINE_UPSTREAM: engine:8080
     ports:
-      - "3001:80"
+      - "13001:80"
     depends_on:
       - analytics
       - engine
@@ -123,7 +126,7 @@ services:
       - wal_compression=on
     shm_size: "256mb"
     ports:
-      - "5433:5432"
+      - "15433:5432"
     volumes:
       - pg_data:/var/lib/postgresql/data
     healthcheck:
@@ -140,7 +143,7 @@ services:
     environment:
       REDIS_PORT: "6379"
     ports:
-      - "6380:6379"
+      - "16380:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s

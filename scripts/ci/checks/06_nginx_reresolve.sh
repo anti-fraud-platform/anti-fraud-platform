@@ -8,5 +8,5 @@ source "$SCRIPT_DIR/../lib/common.sh"
 compose up --build -d --force-recreate engine
 sleep 2
 
-challenge_after_recreate="$(http_get http://localhost:9090/v1/challenge)"
+challenge_after_recreate="$(http_get "$CI_NGINX_URL/v1/challenge")"
 require_challenge_shape "$challenge_after_recreate"
