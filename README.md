@@ -14,7 +14,7 @@ Each click goes through four checks: automated user-agent detection, a GeoIP / A
 |---|---|---|
 | engine | 8080 (internal only) | Accepts clicks, runs fraud checks |
 | nginx_engine | 9090 | Reverse proxy in front of the engine, serves the click simulator page |
-| analytics | 8081 | REST API over click_logs |
+| analytics | 8081 | REST API over click_logs + JWT auth |
 | frontend | 3001 | React dashboard, polls every 2.5s |
 | postgres | 5433 | Stores all click logs |
 | redis | 6380 | Per-IP rate limit counters |
@@ -25,11 +25,17 @@ Monitoring and VM load-test flow for Week 6: [docs/MONITORING_LOADTEST.md](docs/
 
 ## Database
 
-PostgreSQL is the only persistent store. The schema is in `deployments/init-db.sql` and runs automatically on first `docker compose up`.
+PostgreSQL is the only persistent store. The schema is managed by a migration system (`internal/migrator/`) and applied automatically on first `docker compose up` or when either the engine or analytics service starts.
 
-Two tables:
+Five tables:
 
 `click_logs` stores every click that hits the engine, both allowed and blocked. The `reason` column can hold `allowed`, `dynamic_blacklist`, `geoip_policy`, `rate_limit_exceeded`, `suspicious_agent`, `no_js_challenge`, `challenge_too_fast`, `challenge_mismatch`, `suspicious_headers`, or `risk_score_exceeded`. Indexes on `ip`, `campaign_id`, and `processed_at` keep the analytics queries fast even at high row counts.
+
+`campaigns` stores per-campaign configuration including `cost_per_click`. Seeded with `unknown` and `demo` campaigns on first run. Cost per click can be updated via `PUT /v1/analytics/campaigns` or edited inline in the dashboard.
+
+`dynamic_blacklist` stores IPs auto-promoted from repeated flagged clicks (5+ hits within 1 hour). Entries expire after 15 minutes. Used for fast blocking at the engine layer.
+
+`users` stores authenticated user accounts with bcrypt-hashed passwords and roles (`admin`, `viewer`). An admin user is auto-seeded on first startup when `REQUIRE_AUTH=true`.
 
 `audit_events` stores system events for the activity feed. Empty by default, populated manually or via an application hook.
 
@@ -129,9 +135,11 @@ docker compose logs <service-name>
 | What | URL |
 |---|---|
 | Dashboard | http://localhost:3001 |
+| Login | http://localhost:3001/login |
+| Register | http://localhost:3001/register |
 | Click simulator | http://localhost:9090 |
 
-Open the dashboard first, you should see four stat cards (Total clicks, Blocked bots, Money saved, Budget saved) all showing `0` on a fresh database, updating automatically every 2.5 seconds via polling.
+Open the dashboard at http://localhost:3001. With auth enabled (`REQUIRE_AUTH=true`), you will be redirected to `/login`. Log in with `admin / admin123` (or register a new account). Once authenticated, you should see four stat cards (Total clicks, Blocked clicks, Allowed clicks, Active campaigns) with delta percentages, updating automatically every 2.5 seconds via polling.
 
 Open the click simulator in a separate tab and click the buttons a few times. `Send Real Click` solves the JS challenge in-browser and should produce a `success` response. `Send Click Without Solving Challenge` should produce a `flagged` response. Within a couple seconds, refresh the dashboard and confirm the numbers moved.
 
@@ -270,6 +278,74 @@ docker compose down -v     # stop containers, wipe Postgres volume too
 
 Full setup guide with additional troubleshooting: [docs/SETUP.md](docs/SETUP.md)
 
+## Authentication
+
+The analytics API supports JWT-based authentication. When enabled, all `/v1/analytics/*` endpoints require a valid Bearer token.
+
+### Enabling auth
+
+Set these environment variables in `docker-compose.yml`:
+
+```yaml
+analytics:
+  environment:
+    REQUIRE_AUTH: "true"
+    JWT_SECRET: "your-secret-key"
+    ADMIN_PASSWORD: "your-admin-password"
+```
+
+On first startup, an admin user (`admin`) is auto-seeded. All users registered via the API default to the `viewer` role.
+
+### Flow
+
+```
+1. POST /v1/auth/register  { "username": "alice", "password": "pass123" }
+   → 201 { "message": "user created" }
+
+2. POST /v1/auth/login     { "username": "alice", "password": "pass123" }
+   → 200 { "token": "eyJhbGci..." }
+
+3. GET /v1/analytics/stats
+   Header: Authorization: Bearer eyJhbGci...
+   → 200 { ...analytics data... }
+
+4. GET /v1/auth/me
+   Header: Authorization: Bearer eyJhbGci...
+   → 200 { "id": 1, "username": "alice", "role": "viewer" }
+```
+
+### What stays open (no auth required)
+
+- `GET /v1/challenge` — external JS challenge
+- `POST /v1/click` — external click ingestion
+- `GET /health` — health check
+- `GET /metrics` — Prometheus metrics
+- `POST /v1/auth/register` — public registration
+- `POST /v1/auth/login` — public login
+
+### Disabling auth
+
+Set `REQUIRE_AUTH` to `false` or leave it unset. All endpoints will be open (this is the default for local development and CI).
+
+## Configuration
+
+Key environment variables for the stack:
+
+| Variable | Service | Default | Description |
+|---|---|---|---|
+| `REQUIRE_AUTH` | analytics | `false` | Enable JWT auth on analytics endpoints |
+| `JWT_SECRET` | analytics | `change-me-in-production` | Secret key for signing JWT tokens |
+| `ADMIN_PASSWORD` | analytics | `admin123` | Password for the auto-seeded admin user |
+| `REQUIRE_JS_CHALLENGE` | engine | `true` | Enable JS challenge verification |
+| `REQUIRE_HEADER_CHECK` | engine | `true` | Enable header heuristic scoring |
+| `DB_HOST` | all | `localhost` | PostgreSQL host |
+| `DB_PORT` | all | `5432` | PostgreSQL port |
+| `DB_USER` | all | `antifraud` | PostgreSQL username |
+| `DB_PASSWORD` | all | `antifraud123` | PostgreSQL password |
+| `DB_NAME` | all | `analytics` | PostgreSQL database name |
+
+All variables are set in `docker-compose.yml` and `docker-compose.ci.yml`. For the full list, see the compose files.
+
 ## Real GeoIP Checks
 
 GeoIP only makes sense if the databases are real and the IP is a real public address.
@@ -389,10 +465,49 @@ Notable tests:
 - `TestHandleClickSuspiciousAgentDetection` - confirms bot user-agents (curl, python-requests, empty UA, explicit automated header) are all flagged correctly
 - `TestEvaluateMatchesBlockedASNKeyword` - confirms GeoIP / ASN policy blocks configured network organizations
 - `TestClickIntegrationPipeline` - full HTTP round trip against a real Redis instance
+- `TestValidateTokenHS384RejectedWhenExpectingHS256` - confirms algorithm confusion attacks are blocked (auth)
+- `TestIntegrationRegisterLoginMeFlow` - full register → login → me flow against real Postgres (auth)
+- `TestIntegrationSeedAdminIdempotent` - confirms admin user is seeded correctly on startup (auth)
 
 ![Sustained load test result](docs/Sustained%20load%20test%20result.jpeg)
 
 ## Analytics API
+
+All endpoints below are protected when `REQUIRE_AUTH=true`. Pass `Authorization: Bearer <token>` in the request header.
+
+Full API contract: [docs/api.md](docs/api.md)
+
+### POST /v1/auth/register
+
+Create a new user account.
+
+```json
+{ "username": "alice", "password": "pass123" }
+```
+
+Response: `201 { "message": "user created" }`
+
+Validates: username 3-64 chars, password 6+ chars. Returns `409` on duplicate username.
+
+### POST /v1/auth/login
+
+Authenticate and receive a JWT token.
+
+```json
+{ "username": "alice", "password": "pass123" }
+```
+
+Response: `200 { "token": "eyJhbGci..." }`
+
+Returns `401` on invalid credentials. Token expires in 24 hours.
+
+### GET /v1/auth/me
+
+Return the current user's profile. Requires auth.
+
+```json
+{ "id": 1, "username": "alice", "role": "viewer" }
+```
 
 ### GET /v1/analytics/stats
 
@@ -401,9 +516,11 @@ Notable tests:
   "total_clicks": 315936,
   "allowed_count": 15679,
   "blocked_count": 300257,
+  "blocked_bots": 300257,
   "budget_saved": 1501285,
+  "saved_money_usd": 1501285,
   "top_blocked_ips": [
-    { "ip": "1.2.3.4", "count": 28154 }
+    { "ip": "1.2.3.4", "blocked": 28154, "total_requests": 29000 }
   ],
   "campaigns": [
     {
@@ -412,7 +529,21 @@ Notable tests:
       "blocked_bots": 48120,
       "saved_money_usd": 240600
     }
-  ]
+  ],
+  "previous_total_clicks": 290000,
+  "previous_blocked_count": 250000,
+  "total_clicks_delta_percent": 8.9,
+  "blocked_count_delta_percent": 20.1,
+  "reason_breakdown": {
+    "suspicious_agent": 5,
+    "no_js_challenge": 11,
+    "suspicious_headers": 9,
+    "geoip_policy": 13,
+    "rate_limit_exceeded": 6,
+    "risk_score_exceeded": 3
+  },
+  "js_challenge_blocked": 11,
+  "header_heuristic_blocked": 9
 }
 ```
 
@@ -473,6 +604,18 @@ Only includes IPs blocked via the GeoIP / ASN policy (`reason = geoip_policy`). 
 ### GET /v1/analytics/events
 
 Last 20 audit events. Requires rows in the `audit_events` table.
+
+### PUT /v1/analytics/campaigns
+
+Update or create a campaign with a custom cost per click.
+
+```json
+{ "campaign_id": "demo", "cost_per_click": 10 }
+```
+
+Response: `200 { "campaign_id": "demo", "cost_per_click": 10 }`
+
+Upserts into the `campaigns` table. Validates: `campaign_id` required, `cost_per_click` must be positive. The dashboard's "Cost saved by campaign" widget also supports inline editing of this value.
 
 ![Architecture](docs/Architecture.jpeg)
 
